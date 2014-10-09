@@ -1,10 +1,12 @@
+# coding: utf-8
+
+from __future__ import unicode_literals, division, print_function
+
 #!/usr/bin/env python
 
 """
 Script to write GW Input for VASP and ABINIT / set up work flows.
 """
-
-from __future__ import division
 
 __author__ = "Michiel van Setten"
 __copyright__ = " "
@@ -17,12 +19,14 @@ import os
 import os.path
 
 from pymatgen.io.gwwrapper.datastructures import get_spec
+from pymatgen.io.gwwrapper.helpers import load_ps
 
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 if __name__ == "__main__":
     counter = 0
+    load_ps()
     spec_in = get_spec('GW')
     try:
         spec_in.read_from_file('spec.in')
