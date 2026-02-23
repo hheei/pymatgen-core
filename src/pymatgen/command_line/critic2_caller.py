@@ -54,8 +54,8 @@ from monty.serialization import loadfn
 from monty.tempfile import ScratchDir
 from scipy.spatial import KDTree
 
-from pymatgen.analysis.graphs import StructureGraph
 from pymatgen.core import DummySpecies
+from pymatgen.core.graphs import StructureGraph
 from pymatgen.io.vasp.inputs import Potcar
 from pymatgen.io.vasp.outputs import Chgcar, VolumetricData
 from pymatgen.util.due import Doi, due

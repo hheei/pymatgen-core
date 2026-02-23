@@ -11,13 +11,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from pymatgen.analysis.bond_valence import BVAnalyzer
-from pymatgen.analysis.elasticity.strain import Deformation
-from pymatgen.analysis.ewald import EwaldMinimizer, EwaldSummation
-from pymatgen.analysis.structure_matcher import StructureMatcher
 from pymatgen.core import Composition, get_el_sp
+from pymatgen.core.bond_valence import BVAnalyzer
+from pymatgen.core.elasticity.strain import Deformation
+from pymatgen.core.ewald import EwaldMinimizer, EwaldSummation
 from pymatgen.core.operations import SymmOp
 from pymatgen.core.structure import Lattice, Structure
+from pymatgen.core.structure_matcher import StructureMatcher
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.symmetry.structure import SymmetrizedStructure
 from pymatgen.transformations.site_transformations import PartialRemoveSitesTransformation

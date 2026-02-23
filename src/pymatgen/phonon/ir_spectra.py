@@ -15,7 +15,6 @@ from monty.json import MSONable
 from pymatgen.core.spectrum import Spectrum
 from pymatgen.core.structure import Structure
 from pymatgen.util.plotting import add_fig_kwargs
-from pymatgen.vis.plotters import SpectrumPlotter
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -25,6 +24,7 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike
 
     from pymatgen.util.typing import PathLike
+    from pymatgen.vis.plotters import SpectrumPlotter
 
 __author__ = "Henrique Miranda, Guido Petretto, Matteo Giantomassi"
 __copyright__ = "Copyright 2018, The Materials Project"
@@ -215,6 +215,8 @@ class IRDielectricTensor(MSONable):
             divs: number of frequency samples between emin and emax
             **kwargs: Passed to IRDielectricTensor.get_spectrum()
         """
+        from pymatgen.vis.plotters import SpectrumPlotter
+
         directions_map = {"x": 0, "y": 1, "z": 2, 0: 0, 1: 1, 2: 2}
         reim_label = {"re": "Re", "im": "Im"}
 
