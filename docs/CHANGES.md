@@ -6,6 +6,11 @@ nav_order: 4
 
 # Changelog
 
+## v2026.3.10
+
+- PR #5 Add lobster io and electronic_structure/cohp.py module with history (by @naik-aakash)
+- PR #4 Add support for jdftx YAML files in pyproject.toml (by @cote3804)
+
 ## v2026.2.24
 - First version of pymatgen-core, which includes all basic functionality of pymatgen. 
 - Some refactoring of certain modules, e.g., `structure_matcher`,  `molecule_matcher`, `elasticity`, etc. into
