@@ -538,8 +538,9 @@ class POLARIZATION(LobsterFile):
     """Parser for POLARIZATION.lobster file.
 
     Attributes:
-        rel_mulliken_pol_vector (dict[str, float]): Relative Mulliken polarization vector.
-        rel_loewdin_pol_vector (dict[str, float]): Relative Loewdin polarization vector.
+        rel_mulliken_pol_vector (dict[str, float | str]): Relative Mulliken polarization vector
+            (numeric components and optional ``unit`` label rows).
+        rel_loewdin_pol_vector (dict[str, float | str]): Relative Loewdin polarization vector.
     """
 
     @version_processor()
@@ -549,8 +550,8 @@ class POLARIZATION(LobsterFile):
         Returns:
             None
         """
-        self.rel_mulliken_pol_vector = {}
-        self.rel_loewdin_pol_vector = {}
+        self.rel_mulliken_pol_vector: dict[str, float | str] = {}
+        self.rel_loewdin_pol_vector: dict[str, float | str] = {}
 
         for line in islice(self.iterate_lines(), 3, None):
             cleanlines = [idx for idx in line.split(" ") if idx != ""]
@@ -558,12 +559,8 @@ class POLARIZATION(LobsterFile):
                 self.rel_mulliken_pol_vector[cleanlines[0]] = float(cleanlines[1])
                 self.rel_loewdin_pol_vector[cleanlines[0]] = float(cleanlines[2])
             if cleanlines and len(cleanlines) == 4:
-                self.rel_mulliken_pol_vector[cleanlines[0].replace(":", "")] = float(
-                    cleanlines[1].replace("\u03bc", "u")
-                )
-                self.rel_loewdin_pol_vector[cleanlines[2].replace(":", "")] = float(
-                    cleanlines[3].replace("\u03bc", "u")
-                )
+                self.rel_mulliken_pol_vector[cleanlines[0].replace(":", "")] = cleanlines[1].replace("\u03bc", "u")
+                self.rel_loewdin_pol_vector[cleanlines[2].replace(":", "")] = cleanlines[3].replace("\u03bc", "u")
 
     @classmethod
     def get_default_filename(cls) -> str:
