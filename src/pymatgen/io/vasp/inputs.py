@@ -3105,7 +3105,7 @@ class VaspInput(dict, MSONable):
 
     def as_dict(self) -> dict:
         """MSONable dict."""
-        dct = {key: val.as_dict() for key, val in self.items()}
+        dct = {key: val.as_dict() if hasattr(val, "as_dict") else val for key, val in self.items()}
         dct["@module"] = type(self).__module__
         dct["@class"] = type(self).__name__
         return dct
@@ -3119,10 +3119,13 @@ class VaspInput(dict, MSONable):
         Returns:
             VaspInput
         """
-        sub_dct: dict[str, dict] = {"optional_files": {}}
+        sub_dct: dict[str, Any] = {"optional_files": {}}
         for key, val in dct.items():
             if key in ("INCAR", "POSCAR", "POTCAR", "KPOINTS"):
                 sub_dct[key.lower()] = MontyDecoder().process_decoded(val)
+            elif key == "POTCAR.spec":
+                sub_dct["potcar"] = val
+                sub_dct["potcar_spec"] = True
             elif key not in ["@module", "@class"]:
                 sub_dct["optional_files"][key] = MontyDecoder().process_decoded(val)
         return cls(**sub_dct)  # type: ignore[arg-type]
