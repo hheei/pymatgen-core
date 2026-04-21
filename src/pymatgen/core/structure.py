@@ -3081,6 +3081,29 @@ class IStructure(SiteCollection, MSONable):
 
         raise ValueError(f"Invalid source: {source}")
 
+    @staticmethod
+    def _filter_kwargs(func: Callable, kwargs: dict) -> dict:
+        """Filter kwargs to only those accepted by func, warning about any removed.
+
+        Args:
+            func: The callable to inspect.
+            kwargs: The kwargs dict to filter.
+
+        Returns:
+            dict of kwargs supported by func.
+        """
+        params = inspect.signature(func).parameters
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return kwargs
+        supported = {k: v for k, v in kwargs.items() if k in params}
+        unsupported = kwargs.keys() - supported.keys()
+        if unsupported:
+            warnings.warn(
+                f"The following kwargs are not supported by {func.__qualname__} and will be ignored: {unsupported}",
+                stacklevel=3,
+            )
+        return supported
+
     @classmethod
     def from_str(  # type:ignore[override]
         cls,
@@ -3113,16 +3136,18 @@ class IStructure(SiteCollection, MSONable):
         if fmt_low == "cif":
             from pymatgen.io.cif import CifParser
 
-            parser = CifParser.from_str(input_string, **kwargs)
+            parser = CifParser.from_str(input_string, **cls._filter_kwargs(CifParser.from_str, kwargs))
             struct = parser.parse_structures(primitive=primitive)[0]
         elif fmt_low == "poscar":
             from pymatgen.io.vasp import Poscar
 
-            struct = Poscar.from_str(input_string, default_names=None, read_velocities=False, **kwargs).structure
+            struct = Poscar.from_str(
+                input_string, default_names=None, read_velocities=False, **cls._filter_kwargs(Poscar.from_str, kwargs)
+            ).structure
         elif fmt_low == "cssr":
             from pymatgen.io.cssr import Cssr
 
-            cssr = Cssr.from_str(input_string, **kwargs)
+            cssr = Cssr.from_str(input_string, **cls._filter_kwargs(Cssr.from_str, kwargs))
             struct = cssr.structure  # type:ignore[assignment]
         elif fmt_low == "json":
             dct = orjson.loads(input_string)
@@ -3134,11 +3159,11 @@ class IStructure(SiteCollection, MSONable):
         elif fmt_low == "xsf":
             from pymatgen.io.xcrysden import XSF
 
-            struct = XSF.from_str(input_string, **kwargs).structure  # type:ignore[assignment]
+            struct = XSF.from_str(input_string, **cls._filter_kwargs(XSF.from_str, kwargs)).structure  # type:ignore[assignment]
         elif fmt_low == "mcsqs":
             from pymatgen.io.atat import Mcsqs
 
-            struct = Mcsqs.structure_from_str(input_string, **kwargs)
+            struct = Mcsqs.structure_from_str(input_string, **cls._filter_kwargs(Mcsqs.structure_from_str, kwargs))
         elif fmt == "aims":
             from pymatgen.io.aims.inputs import AimsGeometryIn
 
@@ -3147,6 +3172,11 @@ class IStructure(SiteCollection, MSONable):
         elif fmt == "fleur-inpgen":
             from pymatgen.io.fleur import FleurInput
 
+            if kwargs:
+                warnings.warn(
+                    f"kwargs {set(kwargs)} cannot be validated for fleur-inpgen (external package) and will be passed through as-is.",
+                    stacklevel=2,
+                )
             struct = FleurInput.from_string(input_string, inpgen_input=True, **kwargs).structure
         elif fmt == "fleur":
             from pymatgen.io.fleur import FleurInput
@@ -3155,11 +3185,11 @@ class IStructure(SiteCollection, MSONable):
         elif fmt == "res":
             from pymatgen.io.res import ResIO
 
-            struct = ResIO.structure_from_str(input_string, **kwargs)
+            struct = ResIO.structure_from_str(input_string, **cls._filter_kwargs(ResIO.structure_from_str, kwargs))
         elif fmt == "pwmat":
             from pymatgen.io.pwmat import AtomConfig
 
-            struct = AtomConfig.from_str(input_string, **kwargs).structure
+            struct = AtomConfig.from_str(input_string, **cls._filter_kwargs(AtomConfig.from_str, kwargs)).structure
         else:
             raise ValueError(f"Invalid {fmt=}, valid options are {get_args(FileFormats)}")
 
