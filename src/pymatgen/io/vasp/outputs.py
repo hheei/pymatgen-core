@@ -3774,8 +3774,9 @@ class Outcar:
             vacuum_potential_upper (float): Upper vacuum potential
             vacuum_potential_lower (float): Lower vacuum potential
         """
+        pattern = r"vacuum level on the upper side and lower side of the slab\s+([\d\.\-]+)\s+([\d\.\-]+)"
         self.read_pattern(
-            {"vacuum_potentials": r"vacuum level on the upper side and lower side of the slab\s+([\d\.\-]+)\s+([\d\.\-]+)"},
+            {"vacuum_potentials": pattern},
             reverse=reverse,
             terminate_on_match=terminate_on_match,
             postprocess=float,
