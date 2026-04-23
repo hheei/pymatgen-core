@@ -36,6 +36,7 @@ from pymatgen.io.vasp.outputs import (
     Outcar,
     Procar,
     UnconvergedVASPWarning,
+    Vaspwave,
     Vaspout,
     VaspParseError,
     Vasprun,
@@ -2379,3 +2380,45 @@ class TestVaspout(MatSciTest):
             for v in self.vaspout_kpoints_opt.bandgap_props.values()
             for bg_prop in v.values()
         )
+
+
+@pytest.mark.skipif(condition=h5py is None, reason="h5py must be installed to use the .Vaspwave class.")
+class TestVaspwave(MatSciTest):
+    def test_class_available(self):
+        assert Vaspwave is not None
+
+    def test_gamma_only_interface_stub(self):
+        vaspwave = Vaspwave.__new__(Vaspwave)
+        vaspwave.spin = 1
+        vaspwave.nk = 1
+        vaspwave._gamma_only = True
+
+        with pytest.raises(NotImplementedError, match="Gamma-only fft_mesh"):
+            vaspwave.fft_mesh(0, 0)
+
+        with pytest.raises(NotImplementedError, match="Gamma-only evaluate_wavefunc"):
+            vaspwave.evaluate_wavefunc(0, 0, np.zeros(3))
+
+        with pytest.raises(NotImplementedError, match="Gamma-only get_parchg"):
+            vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0)
+
+        with pytest.raises(NotImplementedError, match="Gamma-only write_unks"):
+            vaspwave.write_unks(".")
+
+    def test_non_gamma_guard(self):
+        vaspwave = Vaspwave.__new__(Vaspwave)
+        vaspwave.spin = 1
+        vaspwave.nk = 2
+        vaspwave._gamma_only = False
+
+        with pytest.raises(NotImplementedError, match="Non-gamma vaspwave.h5"):
+            vaspwave._require_gamma_only()
+
+    def test_spin_guard(self):
+        vaspwave = Vaspwave.__new__(Vaspwave)
+        vaspwave.spin = 2
+        vaspwave.nk = 1
+        vaspwave._gamma_only = True
+
+        with pytest.raises(NotImplementedError, match="Spin-polarized vaspwave.h5"):
+            vaspwave._require_gamma_only()

@@ -6025,6 +6025,181 @@ class UnconvergedVASPWarning(Warning):
     """Warning for unconverged VASP run."""
 
 
+@requires(h5py is not None, "h5py must be installed to read vaspwave.h5")
+class Vaspwave(Vasprun):
+    """
+    Class to read vaspwave.h5 files.
+
+    This class is intended as an HDF5-native companion to Wavecar. The current
+    implementation focuses on metadata parsing and a gamma-only interface
+    skeleton, while preserving the original VASP field names used in
+    vaspwave.h5.
+    """
+
+    def __init__(self, filename: str | Path) -> None:
+        self.filename = str(filename)
+        self._wave_path_map: dict[tuple[int, int], str] = {}
+        self._gamma_only = False
+        self._parse()
+
+    @classmethod
+    def _parse_hdf5_value(cls, val: Any) -> Any:
+        """Parse HDF5 values recursively, turning them into Python objects."""
+        if hasattr(val, "items"):
+            val = {k: cls._parse_hdf5_value(v) for k, v in val.items()}
+        else:
+            val = np.array(val).tolist()
+            if isinstance(val, bytes):
+                val = val.decode()
+            elif isinstance(val, list):
+                val = [cls._parse_hdf5_value(x) for x in val]
+        return val
+
+    def _parse(self) -> None:
+        """Parse vaspwave.h5 metadata and register lazy-read dataset paths."""
+        with zopen(self.filename, "rb") as vwave_file, h5py.File(vwave_file, "r") as h5_file:
+            self.version = self._parse_hdf5_value(h5_file["version"])
+            self.wave = self._parse_hdf5_value(h5_file["wave"])
+            self.locpot = self._parse_hdf5_value(h5_file["locpot"]) if h5_file.get("locpot") else None
+
+            self._register_wave_paths(h5_file["wave"])
+
+        spin = int(self.wave["rispin"])
+        nk = int(self.wave["rnkpts"])
+        nb = int(self.wave["rnb_tot"])
+        encut = float(self.wave["enmax"])
+        a = np.array(self.wave["amat"], dtype=float)
+
+        self.spin = spin
+        self.nk = nk
+        self.nb = nb
+        self.encut = encut
+        self.efermi = float(self.wave["efermi"])
+        self.a = a
+        self.vol = np.dot(self.a[0, :], np.cross(self.a[1, :], self.a[2, :]))
+        self.b = 2 * np.pi * np.array(
+            [
+                np.cross(self.a[1, :], self.a[2, :]),
+                np.cross(self.a[2, :], self.a[0, :]),
+                np.cross(self.a[0, :], self.a[1, :]),
+            ]
+        ) / self.vol
+
+        self.kpoints: list[np.ndarray] = []
+        self.band_energy: list[np.ndarray] = []
+        self.num_planewaves: list[int] = []
+        for ik in range(self.nk):
+            kpoint_data = self._get_kpoint_metadata(0, ik)
+            self.kpoints.append(np.array(kpoint_data["vkpt"], dtype=float))
+            self.num_planewaves.append(int(kpoint_data["num_planewaves"]))
+            self.band_energy.append(self._build_band_energy_array(kpoint_data))
+
+        self._gamma_only = self._is_gamma_only()
+        self.vasp_type = "gam" if self._gamma_only else None
+
+    def _register_wave_paths(self, wave_group) -> None:
+        """Register lazy-read paths to per-spin/per-kpoint wavefunction datasets."""
+        for ispin in range(int(self._parse_hdf5_value(wave_group["rispin"]))):
+            spin_key = f"spin_{ispin + 1}"
+            if spin_key not in wave_group:
+                continue
+            for ik in range(int(self._parse_hdf5_value(wave_group["rnkpts"]))):
+                kpoint_key = f"kpoint_{ik + 1}"
+                if kpoint_key not in wave_group[spin_key]:
+                    continue
+                self._wave_path_map[(ispin, ik)] = f"/wave/{spin_key}/{kpoint_key}/wave"
+
+    def _get_kpoint_group_path(self, spin_index: int, kpoint_index: int) -> str:
+        return f"/wave/spin_{spin_index + 1}/kpoint_{kpoint_index + 1}"
+
+    def _get_kpoint_metadata(self, spin_index: int, kpoint_index: int) -> dict[str, Any]:
+        """Read metadata for a single spin/k-point block."""
+        group_path = self._get_kpoint_group_path(spin_index, kpoint_index)
+        with zopen(self.filename, "rb") as vwave_file, h5py.File(vwave_file, "r") as h5_file:
+            kpoint_group = h5_file[group_path]
+            return {
+                "vkpt": self._parse_hdf5_value(kpoint_group["vkpt"]),
+                "fertot": self._parse_hdf5_value(kpoint_group["fertot"]),
+                "celtot": self._parse_hdf5_value(kpoint_group["celtot"]),
+                "num_planewaves": self._parse_hdf5_value(kpoint_group["num_planewaves"]),
+            }
+
+    @staticmethod
+    def _build_band_energy_array(kpoint_data: dict[str, Any]) -> np.ndarray:
+        """Build the Wavecar-like band energy array from celtot and fertot."""
+        celtot = np.array(kpoint_data["celtot"], dtype=float)
+        fertot = np.array(kpoint_data["fertot"], dtype=float)
+        return np.column_stack((celtot[:, 0], celtot[:, 1], fertot))
+
+    def _is_gamma_only(self) -> bool:
+        """Check whether the current file matches the gamma-only implementation."""
+        return self.spin == 1 and self.nk == 1 and all(np.allclose(kpoint, 0.0, atol=1e-8) for kpoint in self.kpoints)
+
+    def _require_gamma_only(self) -> None:
+        """Guard unimplemented non-gamma and spin-polarized code paths."""
+        if self.spin != 1:
+            raise NotImplementedError("Spin-polarized vaspwave.h5 is not implemented yet.")
+        if self.nk != 1 or not self._gamma_only:
+            raise NotImplementedError("Non-gamma vaspwave.h5 is not implemented yet.")
+
+    def _get_band_coeffs(self, spin_index: int, kpoint_index: int, band_index: int) -> np.ndarray:
+        """
+        Lazily read a single band of coefficients from vaspwave.h5.
+
+        Notes:
+            This is currently a gamma-only interface stub and does not yet
+            reconstruct symmetry-related coefficients.
+        """
+        self._require_gamma_only()
+        dataset_path = self._wave_path_map[(spin_index, kpoint_index)]
+        with zopen(self.filename, "rb") as vwave_file, h5py.File(vwave_file, "r") as h5_file:
+            coeffs_re_im = h5_file[dataset_path][band_index, :, :]
+        return coeffs_re_im[:, 0] + 1j * coeffs_re_im[:, 1]
+
+    def fft_mesh(
+        self,
+        kpoint: int,
+        band: int,
+        spin: int = 0,
+        spinor: int = 0,
+        shift: bool = True,
+    ) -> np.ndarray:
+        """Placeholder for gamma-only FFT mesh reconstruction."""
+        self._require_gamma_only()
+        raise NotImplementedError("Gamma-only fft_mesh for vaspwave.h5 is not implemented yet.")
+
+    def evaluate_wavefunc(
+        self,
+        kpoint: int,
+        band: int,
+        r: np.ndarray,
+        spin: int = 0,
+        spinor: int = 0,
+    ) -> np.complex64:
+        """Placeholder for gamma-only wavefunction evaluation."""
+        self._require_gamma_only()
+        raise NotImplementedError("Gamma-only evaluate_wavefunc for vaspwave.h5 is not implemented yet.")
+
+    def get_parchg(
+        self,
+        poscar: Poscar,
+        kpoint: int,
+        band: int,
+        spin: int | None = None,
+        spinor: int | None = None,
+        phase: bool = False,
+        scale: int = 2,
+    ) -> Chgcar:
+        """Placeholder for gamma-only PARCHG generation."""
+        self._require_gamma_only()
+        raise NotImplementedError("Gamma-only get_parchg for vaspwave.h5 is not implemented yet.")
+
+    def write_unks(self, directory: PathLike) -> None:
+        """Placeholder for gamma-only UNK writing."""
+        self._require_gamma_only()
+        raise NotImplementedError("Gamma-only write_unks for vaspwave.h5 is not implemented yet.")
+
+
 @requires(h5py is not None, "h5py must be installed to read vaspout.h5")
 class Vaspout(Vasprun):
     """
