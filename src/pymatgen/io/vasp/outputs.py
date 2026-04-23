@@ -670,6 +670,11 @@ class Vasprun(MSONable):
             real_partyz, real_partxz]], [[imag_partxx, imag_partyy, imag_partzz,
             imag_partxy, imag_partyz, imag_partxz]]).
         """
+        keys = self.dielectric_data.keys()
+        if "density" not in keys:
+            return self.dielectric_data[
+                "INVERSE MACROSCOPIC DIELECTRIC TENSOR (including local field effects in RPA (Hartree))"
+            ]
         return self.dielectric_data["density"]
 
     @property
@@ -711,7 +716,11 @@ class Vasprun(MSONable):
         )
         # In a response function run there is no ionic steps, there is no SCF step
         if final_elec_steps == 0:
-            raise ValueError("there is no ionic step in response function ALGO=CHI.")
+            final_elec_steps = []
+            warnings.warn(
+                "there is no ionic step in response function ALGO=CHI.",
+                stacklevel=2,
+            )
 
         if self.incar.get("LEPSILON"):
             idx = 1
@@ -1358,6 +1367,7 @@ class Vasprun(MSONable):
             "G0W0",
             "GW",
             "BSE",
+            "CHI",
             # VASP renamed the GW tags in v6.
             "QPGW",
             "QPGW0",
@@ -5914,7 +5924,8 @@ class Waveder(MSONable):
         Returns:
             a float value
         """
-        return self.cder[band_i, band_j, kpoint, spin, cart_dir]
+        idx = (band_i, band_j, kpoint, spin, cart_dir)
+        return self.cder_real[idx] + 1j * self.cder_imag[idx]
 
 
 @dataclass
