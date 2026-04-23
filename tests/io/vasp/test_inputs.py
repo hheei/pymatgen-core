@@ -2002,6 +2002,24 @@ class TestVaspInput(MatSciTest):
         vis_potcar_spec.incar["NSW"] = 100
         assert vis_potcar_spec.incar["NSW"] == 100
 
+    def test_as_from_dict_potcar_spec(self):
+        vis_potcar_spec = VaspInput(
+            self.vasp_input.incar,
+            self.vasp_input.kpoints,
+            self.vasp_input.poscar,
+            "\n".join(self.vasp_input.potcar.symbols),
+            potcar_spec=True,
+        )
+        # as_dict should not raise when potcar_spec=True
+        dct = vis_potcar_spec.as_dict()
+
+        # round-trip should preserve potcar_spec structure
+        roundtripped = VaspInput.from_dict(dct)
+        assert {*roundtripped} == {"INCAR", "KPOINTS", "POSCAR", "POTCAR.spec"}
+        assert isinstance(roundtripped.potcar, str)
+        assert roundtripped["POTCAR.spec"] == vis_potcar_spec["POTCAR.spec"]
+        assert roundtripped["INCAR"] == vis_potcar_spec["INCAR"]
+
 
 def test_potcar_summary_stats() -> None:
     potcar_summary_stats = loadfn(POTCAR_STATS_PATH)
