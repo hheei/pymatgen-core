@@ -6106,20 +6106,28 @@ class Vaspwave(Vasprun):
     def _initialize_kpoint_state(self) -> None:
         """Initialize per-k-point metadata used by wavefunction reconstruction."""
         self.kpoints = []
-        self.band_energy = []
         self.num_planewaves = []
+        if self.spin == 2:
+            self.band_energy = [[] for _ in range(self.spin)]
+        else:
+            self.band_energy = []
+
         for ik in range(self.nk):
             kpoint_data = self._get_kpoint_metadata(0, ik)
             self.kpoints.append(np.array(kpoint_data["vkpt"], dtype=float))
             self.num_planewaves.append(int(kpoint_data["num_planewaves"]))
-            self.band_energy.append(self._build_band_energy_array(kpoint_data))
+            if self.spin == 2:
+                for ispin in range(self.spin):
+                    spin_kpoint_data = self._get_kpoint_metadata(ispin, ik)
+                    self.band_energy[ispin].append(self._build_band_energy_array(spin_kpoint_data))
+            else:
+                self.band_energy.append(self._build_band_energy_array(kpoint_data))
 
     def _initialize_reconstruction_state(self) -> None:
         """Initialize reciprocal-space state used to reconstruct wavefunctions."""
         self._generate_nbmax()
         self.ng = self._nbmax * 3
         self._gamma_only = self._is_gamma_only()
-        self.vasp_type = "gam" if self._gamma_only else "std"
         self.Gpoints = [None for _ in range(self.nk)]
         self._gamma_extra_coeff_inds = [[] for _ in range(self.nk)]
 
@@ -6130,11 +6138,18 @@ class Vaspwave(Vasprun):
                 self._gamma_extra_coeff_inds[ik] = extra_coeff_inds
             else:
                 gpoints, _, _ = self._generate_G_points(kpoint, gamma=False)
-                if len(gpoints) != self.num_planewaves[ik]:
+                if len(gpoints) != self.num_planewaves[ik] and 2 * len(gpoints) != self.num_planewaves[ik]:
                     raise ValueError(
                         f"Generated {len(gpoints)} G-points for kpoint {ik}, expected {self.num_planewaves[ik]}."
                     )
                 self.Gpoints[ik] = np.array(gpoints, dtype=np.float64)
+
+        if self._gamma_only:
+            self.vasp_type = "gam"
+        elif all(2 * len(gpoints) == num_pw for gpoints, num_pw in zip(self.Gpoints, self.num_planewaves, strict=False)):
+            self.vasp_type = "ncl"
+        else:
+            self.vasp_type = "std"
 
     def _initialize_wave_state(self, metadata: dict[str, Any]) -> None:
         """Populate derived state from parsed file metadata.
@@ -6329,18 +6344,11 @@ class Vaspwave(Vasprun):
         gamma_gpoints, _, _ = self._generate_G_points(self.kpoints[0], gamma=True)
         return self.num_planewaves[0] == len(gamma_gpoints)
 
-    def _require_gamma_only(self) -> None:
-        """Guard unimplemented non-gamma and spin-polarized code paths."""
-        if self.spin != 1:
-            raise NotImplementedError("Spin-polarized vaspwave.h5 is not implemented yet.")
-        if self.nk != 1 or not self._gamma_only:
-            raise NotImplementedError("Non-gamma vaspwave.h5 is not implemented yet.")
-
     def _require_supported(self) -> None:
         """Guard unsupported Vaspwave code paths."""
         if self.spin not in {1, 2}:
             raise NotImplementedError("Unsupported vaspwave.h5 spin setting.")
-        if self.vasp_type not in {"gam", "std"}:
+        if self.vasp_type not in {"gam", "std", "ncl"}:
             raise NotImplementedError("Unsupported vaspwave.h5 type.")
 
     # -------------------------------------------------------------------------
@@ -6371,12 +6379,18 @@ class Vaspwave(Vasprun):
         """Normalize and validate a collinear spin index."""
         return self._normalize_index(spin_index, self.spin, "Spin")
 
-    def _validate_spin_and_spinor_args(self, spin: int = 0, spinor: int = 0) -> int:
+    def _validate_spin_and_spinor_args(self, spin: int = 0, spinor: int = 0) -> tuple[int, int]:
         """Validate supported spin and spinor arguments for wavefunction APIs."""
         self._require_supported()
+        if self.vasp_type == "ncl":
+            if spin != 0:
+                raise NotImplementedError("Spin-resolved ncl vaspwave.h5 is not implemented yet.")
+            spinor = self._normalize_index(spinor, 2, "Spinor")
+            return 0, spinor
+
         if spinor != 0:
             raise NotImplementedError("Spinor-resolved vaspwave.h5 is not implemented yet.")
-        return self._normalize_spin_index(spin)
+        return self._normalize_spin_index(spin), 0
 
     @staticmethod
     def _validate_volumetric_dataset(grid: np.ndarray, data: np.ndarray, dataset_name: str) -> np.ndarray:
@@ -6393,6 +6407,9 @@ class Vaspwave(Vasprun):
         if data.ndim != 4:
             raise ValueError(f"Expected {dataset_name} to have 4 dimensions, got shape {data.shape}.")
         if data.shape[0] != 1:
+            # TODO: Local ncl vaspwave.h5 samples store four volumetric components
+            # here. Teach Vaspwave to map that representation onto pymatgen's
+            # noncollinear volumetric objects instead of rejecting it.
             raise NotImplementedError(f"Spin-polarized {dataset_name} datasets are not implemented yet.")
         if tuple(grid.tolist()) != tuple(data.shape[1:][::-1]):
             raise ValueError(f"/{dataset_name.rsplit('/', 1)[0]}/grid {tuple(grid.tolist())} does not match {dataset_name} shape {data.shape[1:]}.")
@@ -6445,6 +6462,11 @@ class Vaspwave(Vasprun):
             np.ndarray: Canonical complex coefficients aligned with
                 ``self.Gpoints[kpoint_index]``.
         """
+        if self.vasp_type == "ncl":
+            if len(coeffs) != 2 * len(self.Gpoints[kpoint_index]):
+                raise ValueError("Serialized ncl coefficients do not match the expected spinor-packed size.")
+            return np.array(coeffs, dtype=np.complex128).reshape((2, len(self.Gpoints[kpoint_index])))
+
         if not self._gamma_only:
             # For std files, the source-level restart path shows that VASP may
             # still apply additional internal redistribution when reconstructing
@@ -6473,9 +6495,11 @@ class Vaspwave(Vasprun):
             mesh[t] = coeff
         return np.fft.ifftshift(mesh) if shift else mesh
 
-    def _ifft_wavefunction(self, kpoint: int, band: int, spin: int = 0) -> np.ndarray:
+    def _ifft_wavefunction(self, kpoint: int, band: int, spin: int = 0, spinor: int = 0) -> np.ndarray:
         """Reconstruct a real-space wavefunction on the current FFT grid."""
         coeffs = self.get_band_coeffs(spin, kpoint, band)
+        if self.vasp_type == "ncl":
+            coeffs = coeffs[spinor]
         N = np.prod(self.ng)
         return np.fft.ifftn(self._build_mesh_from_coeffs(kpoint, coeffs)) * N
 
@@ -6495,7 +6519,8 @@ class Vaspwave(Vasprun):
             coefficients pointwise.
 
         Args:
-            spin_index (int): Spin index. Only ``0`` is supported.
+            spin_index (int): Spin index. Only ``0`` is supported for ``gam``,
+                ``std``, and current ``ncl`` samples.
             kpoint_index (int): K-point index of the desired wavefunction.
             band_index (int): Band index of the desired wavefunction.
 
@@ -6532,9 +6557,11 @@ class Vaspwave(Vasprun):
             np.ndarray: Complex FFT mesh containing the wavefunction
                 coefficients.
         """
-        spin = self._validate_spin_and_spinor_args(spin=spin, spinor=spinor)
+        spin, spinor = self._validate_spin_and_spinor_args(spin=spin, spinor=spinor)
         kpoint, band = self._normalize_wave_indices(kpoint, band)
         tcoeffs = self.get_band_coeffs(spin, kpoint, band)
+        if self.vasp_type == "ncl":
+            tcoeffs = tcoeffs[spinor]
         return self._build_mesh_from_coeffs(kpoint, tcoeffs, shift=shift)
 
     def evaluate_wavefunc(
@@ -6558,11 +6585,13 @@ class Vaspwave(Vasprun):
         Returns:
             np.complex64: Wavefunction value evaluated at ``r``.
         """
-        spin = self._validate_spin_and_spinor_args(spin=spin, spinor=spinor)
+        spin, spinor = self._validate_spin_and_spinor_args(spin=spin, spinor=spinor)
         kpoint, band = self._normalize_wave_indices(kpoint, band)
         v = self.Gpoints[kpoint] + self.kpoints[kpoint]
         u = np.dot(np.dot(v, self.b), r)
         coeffs = self.get_band_coeffs(spin, kpoint, band)
+        if self.vasp_type == "ncl":
+            coeffs = coeffs[spinor]
         return np.sum(np.dot(coeffs, np.exp(1j * u, dtype=np.complex64))) / np.sqrt(self.vol)
 
     def get_parchg(
@@ -6597,7 +6626,7 @@ class Vaspwave(Vasprun):
                 wavefunction.
         """
         self._require_supported()
-        if spinor is not None:
+        if self.vasp_type != "ncl" and spinor is not None:
             raise NotImplementedError("Spinor-resolved vaspwave.h5 is not implemented yet.")
         kpoint, band = self._normalize_wave_indices(kpoint, band)
         if phase and not np.allclose(self.kpoints[kpoint], 0.0):
@@ -6623,6 +6652,24 @@ class Vaspwave(Vasprun):
                 wfr_dn = self._ifft_wavefunction(kpoint, band, spin=1)
                 den_dn = np.abs(np.conj(wfr_dn) * wfr_dn)
                 return Chgcar(poscar, {"total": den_up + den_dn, "diff": den_up - den_dn})
+
+            if self.vasp_type == "ncl":
+                if spin not in (None, 0):
+                    raise NotImplementedError("Spin-resolved ncl vaspwave.h5 is not implemented yet.")
+
+                if spinor is not None:
+                    spinor = self._normalize_index(spinor, 2, "Spinor")
+                    wfr = self._ifft_wavefunction(kpoint, band, spin=0, spinor=spinor)
+                    den = np.abs(np.conj(wfr) * wfr)
+                else:
+                    wfr = self._ifft_wavefunction(kpoint, band, spin=0, spinor=0)
+                    wfr_t = self._ifft_wavefunction(kpoint, band, spin=0, spinor=1)
+                    den = np.abs(np.conj(wfr) * wfr)
+                    den += np.abs(np.conj(wfr_t) * wfr_t)
+
+                if phase:
+                    den = np.sign(np.real(wfr)) * den
+                return Chgcar(poscar, {"total": den})
 
             if spin not in (None, 0):
                 raise NotImplementedError("Spin-resolved vaspwave.h5 is not implemented yet.")
@@ -6665,6 +6712,14 @@ class Vaspwave(Vasprun):
 
         N = np.prod(self.ng)
         for ik in range(self.nk):
+            if self.vasp_type == "ncl":
+                data = np.empty((self.nb, 2, *self.ng), dtype=np.complex128)
+                for ib in range(self.nb):
+                    data[ib, 0, :, :, :] = np.fft.ifftn(self.fft_mesh(ik, ib, spinor=0)) * N
+                    data[ib, 1, :, :, :] = np.fft.ifftn(self.fft_mesh(ik, ib, spinor=1)) * N
+                Unk(ik + 1, data).write_file(str(out_dir / f"UNK{ik + 1:05d}.NC"))
+                continue
+
             data = np.empty((self.nb, *self.ng), dtype=np.complex128)
             for ispin in range(self.spin):
                 for ib in range(self.nb):

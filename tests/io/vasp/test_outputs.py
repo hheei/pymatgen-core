@@ -2392,6 +2392,7 @@ class TestVaspwave(MatSciTest):
         self.local_ispin2_std_dir = LOCAL_VASPWAVE_TEST_DIR / "ispin2-std"
         self.local_isym0_dir = LOCAL_VASPWAVE_TEST_DIR / "isym0"
         self.local_isymm1_dir = LOCAL_VASPWAVE_TEST_DIR / "isym-1"
+        self.local_mno_ncl_dir = LOCAL_VASPWAVE_TEST_DIR / "mno-ncl"
 
     @staticmethod
     def _write_minimal_vaspwave_h5(filename: str | Path) -> None:
@@ -2679,24 +2680,106 @@ class TestVaspwave(MatSciTest):
         with pytest.raises(IndexError, match="Band index 5 out of range"):
             vaspwave.fft_mesh(0, 5)
 
-    def test_non_gamma_guard(self):
+    def test_unsupported_vasp_type_guard(self):
         filename = Path(self.tmp_path) / "vaspwave.h5"
         self._write_minimal_vaspwave_h5(filename)
         vaspwave = Vaspwave(filename)
-        vaspwave.nk = 2
-        vaspwave._gamma_only = False
+        vaspwave.vasp_type = "unknown"
 
-        with pytest.raises(NotImplementedError, match="Non-gamma vaspwave.h5"):
-            vaspwave._require_gamma_only()
+        with pytest.raises(NotImplementedError, match="Unsupported vaspwave.h5 type"):
+            vaspwave._require_supported()
 
-    def test_spin_guard(self):
+    def test_unsupported_spin_setting_guard(self):
         filename = Path(self.tmp_path) / "vaspwave.h5"
         self._write_minimal_vaspwave_h5(filename)
         vaspwave = Vaspwave(filename)
-        vaspwave.spin = 2
+        vaspwave.spin = 3
 
-        with pytest.raises(NotImplementedError, match="Spin-polarized vaspwave.h5"):
-            vaspwave._require_gamma_only()
+        with pytest.raises(NotImplementedError, match="Unsupported vaspwave.h5 spin setting"):
+            vaspwave._require_supported()
+
+    @pytest.mark.skipif(
+        not (LOCAL_VASPWAVE_TEST_DIR / "mno-ncl" / "vaspwave.h5").exists(),
+        reason="Local MnO ncl vaspwave validation files are not available.",
+    )
+    def test_mno_ncl_real_sample_matches_wavecar(self):
+        ncl_dir = self.local_mno_ncl_dir
+        vaspwave = Vaspwave(ncl_dir / "vaspwave.h5")
+        wavecar = Wavecar(ncl_dir / "WAVECAR")
+
+        assert vaspwave.vasp_type == wavecar.vasp_type == "ncl"
+        assert vaspwave.spin == wavecar.spin == 1
+        assert vaspwave.nk == wavecar.nk
+        assert vaspwave.nb == wavecar.nb
+        assert_allclose(vaspwave.kpoints[0], wavecar.kpoints[0])
+        assert len(vaspwave.Gpoints[0]) == len(wavecar.Gpoints[0])
+        assert_allclose(vaspwave.Gpoints[0], wavecar.Gpoints[0])
+
+        coeffs_h5 = vaspwave.get_band_coeffs(0, 0, 0)
+        coeffs_wavecar = wavecar.coeffs[0][0]
+        assert coeffs_h5.shape == coeffs_wavecar.shape == (2, len(wavecar.Gpoints[0]))
+        for spinor in (0, 1):
+            phase = np.vdot(coeffs_wavecar[spinor], coeffs_h5[spinor]) / np.vdot(
+                coeffs_wavecar[spinor], coeffs_wavecar[spinor]
+            )
+            rel_resid = np.linalg.norm(coeffs_h5[spinor] - phase * coeffs_wavecar[spinor]) / np.linalg.norm(
+                coeffs_wavecar[spinor]
+            )
+            if spinor == 0:
+                assert np.linalg.norm(coeffs_h5[spinor] - phase * coeffs_wavecar[spinor]) < 2e-5
+            else:
+                assert rel_resid < 1e-3
+
+        for spinor in (0, 1):
+            coeff_phase = np.vdot(coeffs_wavecar[spinor], coeffs_h5[spinor]) / np.vdot(
+                coeffs_wavecar[spinor], coeffs_wavecar[spinor]
+            )
+            mesh_h5 = vaspwave.fft_mesh(0, 0, spinor=spinor)
+            mesh_wavecar = wavecar.fft_mesh(0, 0, spinor=spinor)
+            mesh_rel_resid = np.linalg.norm(mesh_h5 - coeff_phase * mesh_wavecar) / np.linalg.norm(mesh_wavecar)
+            if spinor == 0:
+                assert np.linalg.norm(mesh_h5 - coeff_phase * mesh_wavecar) < 2e-5
+            else:
+                assert mesh_rel_resid < 1e-3
+
+            assert abs(vaspwave.evaluate_wavefunc(0, 0, np.array([0.0, 0.0, 0.0]), spinor=spinor)) == approx(
+                abs(wavecar.evaluate_wavefunc(0, 0, np.array([0.0, 0.0, 0.0]), spinor=spinor)),
+                rel=0.2,
+                abs=1e-6,
+            )
+
+    @pytest.mark.skipif(
+        not (LOCAL_VASPWAVE_TEST_DIR / "mno-ncl" / "vaspwave.h5").exists(),
+        reason="Local MnO ncl vaspwave validation files are not available.",
+    )
+    def test_mno_ncl_real_sample_parchg_and_unk_match_wavecar(self):
+        ncl_dir = self.local_mno_ncl_dir
+        vaspwave = Vaspwave(ncl_dir / "vaspwave.h5")
+        wavecar = Wavecar(ncl_dir / "WAVECAR")
+        poscar = Chgcar.from_file(ncl_dir / "CHGCAR").poscar
+
+        vaspwave_parchg = vaspwave.get_parchg(poscar, 0, 0, phase=False, scale=1)
+        wavecar_parchg = wavecar.get_parchg(poscar, 0, 0, phase=False, scale=1)
+        total_rel_err = np.linalg.norm(vaspwave_parchg.data["total"] - wavecar_parchg.data["total"]) / np.linalg.norm(
+            wavecar_parchg.data["total"]
+        )
+        assert total_rel_err < 0.02
+
+        vaspwave_parchg_spinor = vaspwave.get_parchg(poscar, 0, 0, spinor=1, phase=False, scale=1)
+        wavecar_parchg_spinor = wavecar.get_parchg(poscar, 0, 0, spinor=1, phase=False, scale=1)
+        spinor_rel_err = np.linalg.norm(
+            vaspwave_parchg_spinor.data["total"] - wavecar_parchg_spinor.data["total"]
+        ) / np.linalg.norm(wavecar_parchg_spinor.data["total"])
+        assert spinor_rel_err < 0.02
+
+        vaspwave_dir = Path(self.tmp_path) / "mno_ncl_vaspwave_unk"
+        wavecar_dir = Path(self.tmp_path) / "mno_ncl_wavecar_unk"
+        vaspwave.write_unks(vaspwave_dir)
+        wavecar.write_unks(wavecar_dir)
+        unk_h5 = Unk.from_file(vaspwave_dir / "UNK00001.NC")
+        unk_wavecar = Unk.from_file(wavecar_dir / "UNK00001.NC")
+        assert unk_h5.data.shape == unk_wavecar.data.shape == (vaspwave.nb, 2, *vaspwave.ng)
+        assert unk_h5.data.dtype == unk_wavecar.data.dtype == np.complex128
 
     def test_get_parchg_minimal_vaspwave_h5(self):
         filename = Path(self.tmp_path) / "vaspwave.h5"
@@ -2938,6 +3021,21 @@ class TestVaspwave(MatSciTest):
                     rel=0.2,
                     abs=1e-6,
                 )
+
+    @pytest.mark.skipif(
+        not (LOCAL_VASPWAVE_TEST_DIR / "ispin2-std" / "vaspwave.h5").exists(),
+        reason="Local ISPIN=2 std vaspwave validation files are not available.",
+    )
+    def test_ispin2_std_band_energy_matches_wavecar(self):
+        vaspwave = Vaspwave(self.local_ispin2_std_dir / "vaspwave.h5")
+
+        assert len(vaspwave.band_energy) == 2
+        for spin in (0, 1):
+            assert len(vaspwave.band_energy[spin]) == vaspwave.nk
+            kpoint_data = vaspwave._get_kpoint_metadata(spin, 0)
+            assert_allclose(vaspwave.band_energy[spin][0], vaspwave._build_band_energy_array(kpoint_data))
+
+        assert not np.allclose(vaspwave.band_energy[0][0], vaspwave.band_energy[1][0])
 
     @pytest.mark.skipif(
         not (LOCAL_VASPWAVE_TEST_DIR / "ispin2-std" / "vaspwave.h5").exists(),
