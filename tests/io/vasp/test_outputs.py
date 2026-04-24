@@ -55,8 +55,6 @@ except ImportError:
     h5py = None
 
 TEST_DIR = f"{TEST_FILES_DIR}/io/vasp"
-VASPWAVE_FIXTURE_DIR = Path(TEST_DIR) / "outputs" / "vaspwave"
-VASPWAVE_FIXTURE_ARCHIVE = Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz"
 
 
 class TestVasprun(MatSciTest):
@@ -2398,10 +2396,11 @@ class TestVaspwave(MatSciTest):
         fixture_dir = extracted_root / "vaspwave" / fixture_name
         if fixture_dir.exists():
             return fixture_dir
-        if not VASPWAVE_FIXTURE_ARCHIVE.exists():
+        archive_path = Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz"
+        if not archive_path.exists():
             return fixture_dir
         extracted_root.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(VASPWAVE_FIXTURE_ARCHIVE, "r:gz") as tar:
+        with tarfile.open(archive_path, "r:gz") as tar:
             tar.extractall(extracted_root, filter="data")
         return fixture_dir
 
@@ -2781,7 +2780,7 @@ class TestVaspwave(MatSciTest):
             vaspwave._require_supported()
 
     @pytest.mark.skipif(
-        not (VASPWAVE_FIXTURE_ARCHIVE.exists()),
+        not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
         reason="Bundled H2 ncl vaspwave fixtures are not available.",
     )
     def test_h2_ncl_fixture_matches_wavecar(self):
@@ -2831,7 +2830,7 @@ class TestVaspwave(MatSciTest):
             )
 
     @pytest.mark.skipif(
-        not (VASPWAVE_FIXTURE_ARCHIVE.exists()),
+        not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
         reason="Bundled H2 ncl vaspwave fixtures are not available.",
     )
     def test_h2_ncl_fixture_parchg_and_unk_match_wavecar(self):
@@ -3086,7 +3085,7 @@ class TestVaspwave(MatSciTest):
             vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0, spinor=0)
 
     @pytest.mark.skipif(
-        not (VASPWAVE_FIXTURE_ARCHIVE.exists()),
+        not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
         reason="Bundled H2 std vaspwave fixtures are not available.",
     )
     def test_h2_ispin2_std_fixture_matches_wavecar(self):
@@ -3127,7 +3126,7 @@ class TestVaspwave(MatSciTest):
                 )
 
     @pytest.mark.skipif(
-        not (VASPWAVE_FIXTURE_ARCHIVE.exists()),
+        not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
         reason="Bundled H2 std vaspwave fixtures are not available.",
     )
     def test_h2_ispin2_std_band_energy_matches_wavecar(self):
@@ -3142,7 +3141,7 @@ class TestVaspwave(MatSciTest):
         assert not np.allclose(vaspwave.band_energy[0][0], vaspwave.band_energy[1][0])
 
     @pytest.mark.skipif(
-        not (VASPWAVE_FIXTURE_ARCHIVE.exists()),
+        not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
         reason="Bundled H2 std vaspwave fixtures are not available.",
     )
     def test_h2_ispin2_std_fixture_parchg_and_unk_match_wavecar(self):
@@ -3189,7 +3188,7 @@ class TestVaspwave(MatSciTest):
         assert unk_h5_dn.data.dtype == unk_wavecar_dn.data.dtype == np.complex128
 
     @pytest.mark.skipif(
-        not (VASPWAVE_FIXTURE_ARCHIVE.exists()),
+        not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
         reason="Bundled H2 ncl vaspwave fixtures are not available.",
     )
     def test_h2_ncl_fixture_charge_density_matches_chgcar(self):
@@ -3212,7 +3211,7 @@ class TestVaspwave(MatSciTest):
         assert diff_rel_err < 2e-4
 
     @pytest.mark.skipif(
-        not (VASPWAVE_FIXTURE_ARCHIVE.exists()),
+        not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
         reason="Bundled H2 ncl vaspwave fixtures are not available.",
     )
     def test_h2_ncl_fixture_locpot_maps_soc_components(self):
