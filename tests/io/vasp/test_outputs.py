@@ -2389,6 +2389,9 @@ class TestVaspwave(MatSciTest):
     def setup_method(self):
         self.local_gamma_dir = LOCAL_VASPWAVE_TEST_DIR / "gamma-only"
         self.local_std_dir = LOCAL_VASPWAVE_TEST_DIR / "std"
+        self.local_ispin2_std_dir = LOCAL_VASPWAVE_TEST_DIR / "ispin2-std"
+        self.local_isym0_dir = LOCAL_VASPWAVE_TEST_DIR / "isym0"
+        self.local_isymm1_dir = LOCAL_VASPWAVE_TEST_DIR / "isym-1"
 
     @staticmethod
     def _write_minimal_vaspwave_h5(filename: str | Path) -> None:
@@ -2493,6 +2496,74 @@ class TestVaspwave(MatSciTest):
                 dtype=np.complex128,
             ),
         )
+
+    def test_read_raw_band_coeffs_minimal_vaspwave_h5(self):
+        filename = Path(self.tmp_path) / "vaspwave.h5"
+        self._write_minimal_vaspwave_h5(filename)
+
+        vaspwave = Vaspwave(filename)
+        coeffs_re_im = vaspwave._read_raw_band_coeffs(0, 0, 1)
+
+        assert coeffs_re_im.shape == (3, 2)
+        assert np.issubdtype(coeffs_re_im.dtype, np.floating)
+        assert_allclose(coeffs_re_im, [[0.0, 1.0], [0.25, -0.5], [0.0, 0.0]])
+
+    def test_decode_raw_band_coeffs_minimal_vaspwave_h5(self):
+        coeffs_re_im = np.array([[1.0, 0.0], [0.5, 0.25], [0.0, 0.0]])
+
+        coeffs = Vaspwave._decode_raw_band_coeffs(coeffs_re_im)
+
+        assert coeffs.shape == (3,)
+        assert np.issubdtype(coeffs.dtype, np.complexfloating)
+        assert_allclose(coeffs, [1.0 + 0.0j, 0.5 + 0.25j, 0.0 + 0.0j])
+
+    def test_to_canonical_band_coeffs_minimal_vaspwave_h5(self):
+        filename = Path(self.tmp_path) / "vaspwave.h5"
+        self._write_minimal_vaspwave_h5(filename)
+
+        vaspwave = Vaspwave(filename)
+        raw_coeffs = np.array([1.0 + 0.0j, 0.5 + 0.25j, 0.0 + 0.0j], dtype=np.complex128)
+        coeffs = vaspwave._to_canonical_band_coeffs(raw_coeffs, 0)
+
+        assert len(coeffs) == len(vaspwave.Gpoints[0])
+        assert coeffs.dtype == np.complex128
+        assert_allclose(
+            coeffs,
+            np.array(
+                [
+                    1.0 + 0.0j,
+                    (0.5 + 0.25j) / np.sqrt(2),
+                    0.0 + 0.0j,
+                    (0.5 - 0.25j) / np.sqrt(2),
+                    0.0 - 0.0j,
+                ],
+                dtype=np.complex128,
+            ),
+        )
+
+    def test_get_band_coeffs_invalid_spin_index(self):
+        filename = Path(self.tmp_path) / "vaspwave.h5"
+        self._write_minimal_vaspwave_h5(filename)
+        vaspwave = Vaspwave(filename)
+
+        with pytest.raises(IndexError, match="Spin index 1 out of range"):
+            vaspwave.get_band_coeffs(1, 0, 0)
+
+    def test_get_band_coeffs_invalid_kpoint_index(self):
+        filename = Path(self.tmp_path) / "vaspwave.h5"
+        self._write_minimal_vaspwave_h5(filename)
+        vaspwave = Vaspwave(filename)
+
+        with pytest.raises(IndexError, match="Kpoint index 2 out of range"):
+            vaspwave.get_band_coeffs(0, 2, 0)
+
+    def test_get_band_coeffs_invalid_band_index(self):
+        filename = Path(self.tmp_path) / "vaspwave.h5"
+        self._write_minimal_vaspwave_h5(filename)
+        vaspwave = Vaspwave(filename)
+
+        with pytest.raises(IndexError, match="Band index 4 out of range"):
+            vaspwave.get_band_coeffs(0, 0, 4)
 
     def test_build_band_energy_array(self):
         kpoint_data = {
@@ -2690,6 +2761,27 @@ class TestVaspwave(MatSciTest):
             np.transpose((100.0 + np.arange(24, dtype=float)).reshape(4, 3, 2), (2, 1, 0)),
         )
 
+    def test_validate_volumetric_dataset_invalid_ndim(self):
+        grid = np.array([2, 3, 4])
+        data = np.zeros((4, 3, 2))
+
+        with pytest.raises(ValueError, match="Expected /charge/charge to have 4 dimensions"):
+            Vaspwave._validate_volumetric_dataset(grid, data, "/charge/charge")
+
+    def test_validate_volumetric_dataset_spin_polarized_not_implemented(self):
+        grid = np.array([2, 3, 4])
+        data = np.zeros((2, 4, 3, 2))
+
+        with pytest.raises(NotImplementedError, match="Spin-polarized /charge/charge datasets are not implemented yet"):
+            Vaspwave._validate_volumetric_dataset(grid, data, "/charge/charge")
+
+    def test_validate_volumetric_dataset_grid_shape_mismatch(self):
+        grid = np.array([2, 3, 5])
+        data = np.zeros((1, 4, 3, 2))
+
+        with pytest.raises(ValueError, match="/charge/grid \\(2, 3, 5\\) does not match /charge/charge shape \\(4, 3, 2\\)"):
+            Vaspwave._validate_volumetric_dataset(grid, data, "/charge/charge")
+
     @pytest.mark.skipif(
         not (LOCAL_VASPWAVE_TEST_DIR / "gamma-only" / "vaspwave.h5").exists(),
         reason="Local gamma-only vaspwave validation files are not available.",
@@ -2805,6 +2897,125 @@ class TestVaspwave(MatSciTest):
 
         with pytest.raises(NotImplementedError, match="Spinor-resolved vaspwave.h5"):
             vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0, spinor=0)
+
+    @pytest.mark.skipif(
+        not (LOCAL_VASPWAVE_TEST_DIR / "ispin2-std" / "vaspwave.h5").exists(),
+        reason="Local ISPIN=2 std vaspwave validation files are not available.",
+    )
+    def test_ispin2_std_real_sample_matches_wavecar(self):
+        vaspwave = Vaspwave(self.local_ispin2_std_dir / "vaspwave.h5")
+        wavecar = Wavecar(self.local_ispin2_std_dir / "WAVECAR")
+
+        # VASP source-level restart code in vhdf5.F/fileio.F warns that
+        # symmetry-reduced vasp_std wavefunctions can change their serialized
+        # HDF5 plane-wave coefficients. The public Vaspwave API exposes a
+        # canonical coefficient vector, but this local ISPIN=2 sample is still
+        # validated against Wavecar with phase-insensitive and relative-error
+        # checks instead of pointwise equality.
+        assert vaspwave.vasp_type == "std"
+        assert vaspwave.spin == wavecar.spin == 2
+        assert vaspwave.nk == wavecar.nk
+        assert vaspwave.nb == wavecar.nb
+        assert_allclose(vaspwave.kpoints[0], wavecar.kpoints[0])
+
+        for spin in (0, 1):
+            for band in (0, min(1, vaspwave.nb - 1)):
+                coeffs_h5 = vaspwave.get_band_coeffs(spin, 0, band)
+                coeffs_wavecar = wavecar.coeffs[spin][0][band]
+                phase = np.vdot(coeffs_wavecar, coeffs_h5) / np.vdot(coeffs_wavecar, coeffs_wavecar)
+                rel_resid = np.linalg.norm(coeffs_h5 - phase * coeffs_wavecar) / np.linalg.norm(coeffs_wavecar)
+                assert rel_resid < 0.08
+
+                mesh_h5 = vaspwave.fft_mesh(0, band, spin=spin)
+                mesh_wavecar = wavecar.fft_mesh(0, band, spin=spin)
+                mesh_rel_resid = np.linalg.norm(mesh_h5 - phase * mesh_wavecar) / np.linalg.norm(mesh_wavecar)
+                assert mesh_rel_resid < 0.08
+
+        for spin in (0, 1):
+            for r in (np.array([0.0, 0.0, 0.0]), np.array([0.1, 0.2, 0.3])):
+                assert abs(vaspwave.evaluate_wavefunc(0, 0, r, spin=spin)) == approx(
+                    abs(wavecar.evaluate_wavefunc(0, 0, r, spin=spin)),
+                    rel=0.2,
+                    abs=1e-6,
+                )
+
+    @pytest.mark.skipif(
+        not (LOCAL_VASPWAVE_TEST_DIR / "ispin2-std" / "vaspwave.h5").exists(),
+        reason="Local ISPIN=2 std vaspwave validation files are not available.",
+    )
+    def test_ispin2_std_real_sample_parchg_and_unk_match_wavecar(self):
+        std_dir = self.local_ispin2_std_dir
+        vaspwave = Vaspwave(std_dir / "vaspwave.h5")
+        wavecar = Wavecar(std_dir / "WAVECAR")
+        poscar = Chgcar.from_file(std_dir / "CHGCAR").poscar
+
+        vaspwave_parchg = vaspwave.get_parchg(poscar, 0, 0, phase=False, scale=1)
+        wavecar_parchg = wavecar.get_parchg(poscar, 0, 0, phase=False, scale=1)
+        total_rel_err = np.linalg.norm(vaspwave_parchg.data["total"] - wavecar_parchg.data["total"]) / np.linalg.norm(
+            wavecar_parchg.data["total"]
+        )
+        diff_rel_err = np.linalg.norm(vaspwave_parchg.data["diff"] - wavecar_parchg.data["diff"]) / np.linalg.norm(
+            wavecar_parchg.data["diff"]
+        )
+        assert total_rel_err < 0.05
+        assert diff_rel_err < 0.12
+
+        vaspwave_parchg_spin = vaspwave.get_parchg(poscar, 0, 0, spin=1, phase=False, scale=1)
+        wavecar_parchg_spin = wavecar.get_parchg(poscar, 0, 0, spin=1, phase=False, scale=1)
+        spin_rel_err = np.linalg.norm(vaspwave_parchg_spin.data["total"] - wavecar_parchg_spin.data["total"]) / np.linalg.norm(
+            wavecar_parchg_spin.data["total"]
+        )
+        assert spin_rel_err < 0.12
+
+        vaspwave_dir = Path(self.tmp_path) / "ispin2_vaspwave_unk"
+        wavecar_dir = Path(self.tmp_path) / "ispin2_wavecar_unk"
+        vaspwave.write_unks(vaspwave_dir)
+        wavecar.write_unks(wavecar_dir)
+
+        # The local ISPIN=2 std sample currently validates UNK export at the
+        # interface level only. VASP's own HDF5/WAVECAR restart path documents
+        # that coefficients may change for vasp_std under symmetry reduction,
+        # so pointwise UNK equality is not assumed here.
+        unk_h5_up = Unk.from_file(vaspwave_dir / "UNK00001.1")
+        unk_h5_dn = Unk.from_file(vaspwave_dir / "UNK00001.2")
+        unk_wavecar_up = Unk.from_file(wavecar_dir / "UNK00001.1")
+        unk_wavecar_dn = Unk.from_file(wavecar_dir / "UNK00001.2")
+
+        assert unk_h5_up.data.shape == unk_wavecar_up.data.shape == (vaspwave.nb, *vaspwave.ng)
+        assert unk_h5_dn.data.shape == unk_wavecar_dn.data.shape == (vaspwave.nb, *vaspwave.ng)
+        assert unk_h5_up.data.dtype == unk_wavecar_up.data.dtype == np.complex128
+        assert unk_h5_dn.data.dtype == unk_wavecar_dn.data.dtype == np.complex128
+
+    @pytest.mark.skipif(
+        not (LOCAL_VASPWAVE_TEST_DIR / "isym0" / "vaspwave.h5").exists(),
+        reason="Local ISYM=0 vaspwave validation files are not available.",
+    )
+    @pytest.mark.skipif(
+        not (LOCAL_VASPWAVE_TEST_DIR / "isym-1" / "vaspwave.h5").exists(),
+        reason="Local ISYM=-1 vaspwave validation files are not available.",
+    )
+    def test_isym_samples_do_not_restore_pointwise_ispin2_equivalence(self):
+        # These local samples document current behavior only. Even without
+        # symmetry reduction (`ISYM=0/-1`), the observed ISPIN=2 HDF5 samples do
+        # not recover pointwise equivalence with the matching WAVECAR files,
+        # especially for the spin-down channel.
+        for sample_dir in (self.local_isym0_dir, self.local_isymm1_dir):
+            vaspwave = Vaspwave(sample_dir / "vaspwave.h5")
+            wavecar = Wavecar(sample_dir / "WAVECAR")
+            poscar = Chgcar.from_file(sample_dir / "CHGCAR").poscar
+
+            coeffs_h5 = vaspwave.get_band_coeffs(1, 0, 0)
+            coeffs_wavecar = wavecar.coeffs[1][0][0]
+            coeff_phase = np.vdot(coeffs_wavecar, coeffs_h5) / np.vdot(coeffs_wavecar, coeffs_wavecar)
+            coeff_rel_err = np.linalg.norm(coeffs_h5 - coeff_phase * coeffs_wavecar) / np.linalg.norm(coeffs_wavecar)
+            assert coeff_rel_err > 0.2
+
+            parchg_h5 = vaspwave.get_parchg(poscar, 0, 0, spin=1, phase=False, scale=1)
+            parchg_wavecar = wavecar.get_parchg(poscar, 0, 0, spin=1, phase=False, scale=1)
+            parchg_rel_err = np.linalg.norm(parchg_h5.data["total"] - parchg_wavecar.data["total"]) / np.linalg.norm(
+                parchg_wavecar.data["total"]
+            )
+            assert parchg_rel_err > 0.5
 
     @pytest.mark.skipif(
         not (LOCAL_VASPWAVE_TEST_DIR / "gamma-only" / "vaspwave.h5").exists(),

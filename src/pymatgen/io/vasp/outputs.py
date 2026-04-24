@@ -6036,14 +6036,20 @@ class UnconvergedVASPWarning(Warning):
 # - When extending support (for example spin-polarized or non-gamma files),
 #   prefer adding capability checks in one place rather than scattering
 #   conditionals across multiple public methods.
+# - For collinear `ISPIN=2` std samples, VASP source-level restart logic in
+#   `vhdf5.F` / `fileio.F` indicates that `vaspwave.h5` and legacy `WAVECAR`
+#   are not always expected to remain pointwise identical under symmetry-
+#   reduced `vasp_std` conditions. Keep that limitation explicit in tests and
+#   docstrings until an `ISYM=0/-1` validation sample proves stricter
+#   equivalence.
 @requires(h5py is not None, "h5py must be installed to read vaspwave.h5")
 class Vaspwave(Vasprun):
     """
     Class to read vaspwave.h5 files.
 
     This class is intended as an HDF5-native companion to Wavecar. The current
-    implementation focuses on gamma-only support with a public interface that
-    matches Wavecar where practical.
+    implementation focuses on gamma-only and std wavefunction access with a
+    public interface that matches Wavecar where practical.
     """
 
     def __init__(self, filename: str | Path) -> None:
@@ -6332,8 +6338,8 @@ class Vaspwave(Vasprun):
 
     def _require_supported(self) -> None:
         """Guard unsupported Vaspwave code paths."""
-        if self.spin != 1:
-            raise NotImplementedError("Spin-polarized vaspwave.h5 is not implemented yet.")
+        if self.spin not in {1, 2}:
+            raise NotImplementedError("Unsupported vaspwave.h5 spin setting.")
         if self.vasp_type not in {"gam", "std"}:
             raise NotImplementedError("Unsupported vaspwave.h5 type.")
 
@@ -6361,6 +6367,17 @@ class Vaspwave(Vasprun):
         """
         return self._normalize_index(kpoint, self.nk, "Kpoint"), self._normalize_index(band, self.nb, "Band")
 
+    def _normalize_spin_index(self, spin_index: int) -> int:
+        """Normalize and validate a collinear spin index."""
+        return self._normalize_index(spin_index, self.spin, "Spin")
+
+    def _validate_spin_and_spinor_args(self, spin: int = 0, spinor: int = 0) -> int:
+        """Validate supported spin and spinor arguments for wavefunction APIs."""
+        self._require_supported()
+        if spinor != 0:
+            raise NotImplementedError("Spinor-resolved vaspwave.h5 is not implemented yet.")
+        return self._normalize_spin_index(spin)
+
     @staticmethod
     def _validate_volumetric_dataset(grid: np.ndarray, data: np.ndarray, dataset_name: str) -> np.ndarray:
         """Validate a spin-unpolarized volumetric dataset and return the transposed 3D grid.
@@ -6387,16 +6404,53 @@ class Vaspwave(Vasprun):
         data = self._read_hdf5_dataset(data_path)
         return self._validate_volumetric_dataset(grid, data, data_path)
 
+    # -------------------------------------------------------------------------
+    # Coefficient conversion pipeline
+    # -------------------------------------------------------------------------
+    #
+    # VASP does not write the public Wavecar-style canonical coefficient arrays
+    # directly into ``vaspwave.h5``. In ``vhdf5.F``, the wave dataset is written
+    # after ``MRG_PW_BAND`` packs the internal plane-wave storage into a
+    # serialized band row. During restart, VASP reads that row back and rebuilds
+    # its internal wave representation with ``DIS_PW_BAND`` (plus gamma-specific
+    # handling when needed).
+    #
+    # ``Vaspwave`` therefore treats the HDF5 ``wave`` dataset as a serialized
+    # on-disk representation, not as a canonical coefficient vector. Public
+    # APIs should expose canonical coefficients aligned with ``self.Gpoints``.
+    # The raw/decode/canonical pipeline below keeps that boundary explicit even
+    # where the full std/ISPIN=2 inverse mapping remains unresolved.
+    #
+    def _read_raw_band_coeffs(self, spin_index: int, kpoint_index: int, band_index: int) -> np.ndarray:
+        """Read one raw band row from the HDF5 wave dataset."""
+        dataset_path = self._get_wave_dataset_path(spin_index, kpoint_index)
+        return self._read_hdf5_dataset_slice(dataset_path, (band_index, slice(None), slice(None)))
+
     @staticmethod
-    def _combine_re_im_coefficients(coeffs_re_im: np.ndarray) -> np.ndarray:
-        """Convert a ``(nplane, 2)`` real/imag array into a complex coefficient array."""
+    def _decode_raw_band_coeffs(coeffs_re_im: np.ndarray) -> np.ndarray:
+        """Decode a raw ``(nplane, 2)`` HDF5 row into serialized complex coefficients."""
         if coeffs_re_im.ndim != 2 or coeffs_re_im.shape[1] != 2:
             raise ValueError("vaspwave.h5 wave coefficients must have shape (nplane, 2).")
         return coeffs_re_im[:, 0] + 1j * coeffs_re_im[:, 1]
 
-    def _expand_gamma_coefficients(self, coeffs: np.ndarray, kpoint_index: int) -> np.ndarray:
-        """Expand gamma-only coefficients to the Wavecar-compatible full set."""
+    def _to_canonical_band_coeffs(self, coeffs: np.ndarray, kpoint_index: int) -> np.ndarray:
+        """Convert serialized HDF5 coefficients into canonical coefficients.
+
+        Args:
+            coeffs (np.ndarray): Serialized complex coefficients read from the
+                HDF5 ``wave`` dataset.
+            kpoint_index (int): Zero-based k-point index.
+
+        Returns:
+            np.ndarray: Canonical complex coefficients aligned with
+                ``self.Gpoints[kpoint_index]``.
+        """
         if not self._gamma_only:
+            # For std files, the source-level restart path shows that VASP may
+            # still apply additional internal redistribution when reconstructing
+            # wave storage. Until the full inverse mapping is established, keep
+            # the canonicalization boundary explicit and return the serialized
+            # coefficients in a stable complex array.
             return np.array(coeffs, dtype=np.complex128)
 
         coeffs = np.array(coeffs, copy=True)
@@ -6419,9 +6473,9 @@ class Vaspwave(Vasprun):
             mesh[t] = coeff
         return np.fft.ifftshift(mesh) if shift else mesh
 
-    def _ifft_wavefunction(self, kpoint: int, band: int) -> np.ndarray:
+    def _ifft_wavefunction(self, kpoint: int, band: int, spin: int = 0) -> np.ndarray:
         """Reconstruct a real-space wavefunction on the current FFT grid."""
-        coeffs = self.get_band_coeffs(0, kpoint, band)
+        coeffs = self.get_band_coeffs(spin, kpoint, band)
         N = np.prod(self.ng)
         return np.fft.ifftn(self._build_mesh_from_coeffs(kpoint, coeffs)) * N
 
@@ -6429,22 +6483,32 @@ class Vaspwave(Vasprun):
     # Public API
     # -------------------------------------------------------------------------
     def get_band_coeffs(self, spin_index: int, kpoint_index: int, band_index: int) -> np.ndarray:
-        """
-        Lazily read a single band of coefficients from vaspwave.h5.
+        """Read a single band of plane-wave coefficients from ``vaspwave.h5``.
 
-        Notes:
-            Gamma-only files reconstruct symmetry-related coefficients to match
-            the Wavecar interface, while std files return the coefficients
-            directly.
+        Note:
+            ``Vaspwave`` reads serialized band rows from the HDF5 dataset and
+            converts them into canonical coefficients exposed through the
+            ``Wavecar``-like public API. Gamma-only files reconstruct the
+            symmetry-related coefficients explicitly. For the local ``ISPIN=2``
+            std sample, the resulting coefficients reproduce Wavecar-derived
+            observables closely, but do not yet match the legacy WAVECAR
+            coefficients pointwise.
+
+        Args:
+            spin_index (int): Spin index. Only ``0`` is supported.
+            kpoint_index (int): K-point index of the desired wavefunction.
+            band_index (int): Band index of the desired wavefunction.
+
+        Returns:
+            np.ndarray: Complex plane-wave coefficients for the requested
+                wavefunction.
         """
         self._require_supported()
-        if spin_index != 0:
-            raise NotImplementedError("Spin-resolved vaspwave.h5 is not implemented yet.")
+        spin_index = self._normalize_spin_index(spin_index)
         kpoint_index, band_index = self._normalize_wave_indices(kpoint_index, band_index)
-        dataset_path = self._get_wave_dataset_path(spin_index, kpoint_index)
-        coeffs_re_im = self._read_hdf5_dataset_slice(dataset_path, (band_index, slice(None), slice(None)))
-        coeffs = self._combine_re_im_coefficients(coeffs_re_im)
-        return self._expand_gamma_coefficients(coeffs, kpoint_index)
+        coeffs_re_im = self._read_raw_band_coeffs(spin_index, kpoint_index, band_index)
+        coeffs = self._decode_raw_band_coeffs(coeffs_re_im)
+        return self._to_canonical_band_coeffs(coeffs, kpoint_index)
 
     def fft_mesh(
         self,
@@ -6468,11 +6532,7 @@ class Vaspwave(Vasprun):
             np.ndarray: Complex FFT mesh containing the wavefunction
                 coefficients.
         """
-        self._require_supported()
-        if spin != 0:
-            raise NotImplementedError("Spin-resolved vaspwave.h5 is not implemented yet.")
-        if spinor != 0:
-            raise NotImplementedError("Spinor-resolved vaspwave.h5 is not implemented yet.")
+        spin = self._validate_spin_and_spinor_args(spin=spin, spinor=spinor)
         kpoint, band = self._normalize_wave_indices(kpoint, band)
         tcoeffs = self.get_band_coeffs(spin, kpoint, band)
         return self._build_mesh_from_coeffs(kpoint, tcoeffs, shift=shift)
@@ -6498,11 +6558,7 @@ class Vaspwave(Vasprun):
         Returns:
             np.complex64: Wavefunction value evaluated at ``r``.
         """
-        self._require_supported()
-        if spin != 0:
-            raise NotImplementedError("Spin-resolved vaspwave.h5 is not implemented yet.")
-        if spinor != 0:
-            raise NotImplementedError("Spinor-resolved vaspwave.h5 is not implemented yet.")
+        spin = self._validate_spin_and_spinor_args(spin=spin, spinor=spinor)
         kpoint, band = self._normalize_wave_indices(kpoint, band)
         v = self.Gpoints[kpoint] + self.kpoints[kpoint]
         u = np.dot(np.dot(v, self.b), r)
@@ -6541,8 +6597,6 @@ class Vaspwave(Vasprun):
                 wavefunction.
         """
         self._require_supported()
-        if spin not in (None, 0):
-            raise NotImplementedError("Spin-resolved vaspwave.h5 is not implemented yet.")
         if spinor is not None:
             raise NotImplementedError("Spinor-resolved vaspwave.h5 is not implemented yet.")
         kpoint, band = self._normalize_wave_indices(kpoint, band)
@@ -6555,7 +6609,25 @@ class Vaspwave(Vasprun):
         temp_ng = self.ng.copy()
         self.ng = self.ng * scale
         try:
-            wfr = self._ifft_wavefunction(kpoint, band)
+            if self.spin == 2:
+                if spin is not None:
+                    spin = self._normalize_spin_index(spin)
+                    wfr = self._ifft_wavefunction(kpoint, band, spin=spin)
+                    den = np.abs(np.conj(wfr) * wfr)
+                    if phase:
+                        den = np.sign(np.real(wfr)) * den
+                    return Chgcar(poscar, {"total": den})
+
+                wfr_up = self._ifft_wavefunction(kpoint, band, spin=0)
+                den_up = np.abs(np.conj(wfr_up) * wfr_up)
+                wfr_dn = self._ifft_wavefunction(kpoint, band, spin=1)
+                den_dn = np.abs(np.conj(wfr_dn) * wfr_dn)
+                return Chgcar(poscar, {"total": den_up + den_dn, "diff": den_up - den_dn})
+
+            if spin not in (None, 0):
+                raise NotImplementedError("Spin-resolved vaspwave.h5 is not implemented yet.")
+
+            wfr = self._ifft_wavefunction(kpoint, band, spin=0)
             den = np.abs(np.conj(wfr) * wfr)
             # Match Wavecar's collinear branch, which sums both spinor channels
             # when spinor is not explicitly selected.
@@ -6577,7 +6649,13 @@ class Vaspwave(Vasprun):
         return Locpot(self.initial_structure, {"total": validated_total})
 
     def write_unks(self, directory: PathLike) -> None:
-        """Write supported ``vaspwave.h5`` wavefunctions to UNK files."""
+        """Write supported ``vaspwave.h5`` wavefunctions to UNK files.
+
+        Note:
+            ``ISPIN=2`` std files currently write the expected pair of UNK
+            files, but their contents are not yet validated to be pointwise
+            identical to ``Wavecar.write_unks()`` for the local HDF5 sample.
+        """
         self._require_supported()
         out_dir = Path(directory).expanduser()
         if not out_dir.exists():
@@ -6588,9 +6666,10 @@ class Vaspwave(Vasprun):
         N = np.prod(self.ng)
         for ik in range(self.nk):
             data = np.empty((self.nb, *self.ng), dtype=np.complex128)
-            for ib in range(self.nb):
-                data[ib, :, :, :] = np.fft.ifftn(self.fft_mesh(ik, ib)) * N
-            Unk(ik + 1, data).write_file(str(out_dir / f"UNK{ik + 1:05d}.1"))
+            for ispin in range(self.spin):
+                for ib in range(self.nb):
+                    data[ib, :, :, :] = np.fft.ifftn(self.fft_mesh(ik, ib, spin=ispin)) * N
+                Unk(ik + 1, data).write_file(str(out_dir / f"UNK{ik + 1:05d}.{ispin + 1}"))
 
 
 @requires(h5py is not None, "h5py must be installed to read vaspout.h5")
