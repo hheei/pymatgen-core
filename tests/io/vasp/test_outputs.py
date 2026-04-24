@@ -54,7 +54,7 @@ except ImportError:
     h5py = None
 
 TEST_DIR = f"{TEST_FILES_DIR}/io/vasp"
-LOCAL_VASPWAVE_TEST_DIR = Path("/Users/supercgor/Downloads/vasp_test")
+VASPWAVE_FIXTURE_DIR = Path(TEST_DIR) / "outputs" / "vaspwave"
 
 
 class TestVasprun(MatSciTest):
@@ -2387,12 +2387,16 @@ class TestVaspout(MatSciTest):
 class TestVaspwave(MatSciTest):
     @pytest.fixture(autouse=True)
     def setup_method(self):
-        self.local_gamma_dir = LOCAL_VASPWAVE_TEST_DIR / "gamma-only"
-        self.local_std_dir = LOCAL_VASPWAVE_TEST_DIR / "std"
-        self.local_ispin2_std_dir = LOCAL_VASPWAVE_TEST_DIR / "ispin2-std"
-        self.local_isym0_dir = LOCAL_VASPWAVE_TEST_DIR / "isym0"
-        self.local_isymm1_dir = LOCAL_VASPWAVE_TEST_DIR / "isym-1"
-        self.local_mno_ncl_dir = LOCAL_VASPWAVE_TEST_DIR / "mno-ncl"
+        self.gamma_dir = VASPWAVE_FIXTURE_DIR / "gamma-only"
+        self.std_dir = VASPWAVE_FIXTURE_DIR / "std"
+        self.ispin2_std_dir = VASPWAVE_FIXTURE_DIR / "ispin2-std"
+        self.isym0_dir = VASPWAVE_FIXTURE_DIR / "isym0"
+        self.isymm1_dir = VASPWAVE_FIXTURE_DIR / "isym-1"
+        self.mno_ncl_dir = VASPWAVE_FIXTURE_DIR / "mno-ncl"
+
+    @staticmethod
+    def _has_vaspwave_fixture(sample_dir: Path) -> bool:
+        return (sample_dir / "vaspwave.h5").exists()
 
     @staticmethod
     def _write_minimal_vaspwave_h5(filename: str | Path) -> None:
@@ -2699,11 +2703,11 @@ class TestVaspwave(MatSciTest):
             vaspwave._require_supported()
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "mno-ncl" / "vaspwave.h5").exists(),
-        reason="Local MnO ncl vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "mno-ncl" / "vaspwave.h5").exists(),
+        reason="MnO ncl vaspwave fixtures are not available.",
     )
     def test_mno_ncl_real_sample_matches_wavecar(self):
-        ncl_dir = self.local_mno_ncl_dir
+        ncl_dir = self.mno_ncl_dir
         vaspwave = Vaspwave(ncl_dir / "vaspwave.h5")
         wavecar = Wavecar(ncl_dir / "WAVECAR")
 
@@ -2749,11 +2753,11 @@ class TestVaspwave(MatSciTest):
             )
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "mno-ncl" / "vaspwave.h5").exists(),
-        reason="Local MnO ncl vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "mno-ncl" / "vaspwave.h5").exists(),
+        reason="MnO ncl vaspwave fixtures are not available.",
     )
     def test_mno_ncl_real_sample_parchg_and_unk_match_wavecar(self):
-        ncl_dir = self.local_mno_ncl_dir
+        ncl_dir = self.mno_ncl_dir
         vaspwave = Vaspwave(ncl_dir / "vaspwave.h5")
         wavecar = Wavecar(ncl_dir / "WAVECAR")
         poscar = Chgcar.from_file(ncl_dir / "CHGCAR").poscar
@@ -2883,12 +2887,12 @@ class TestVaspwave(MatSciTest):
             Vaspwave._validate_volumetric_dataset(grid, data, "/charge/charge")
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "gamma-only" / "vaspwave.h5").exists(),
-        reason="Local gamma-only vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "gamma-only" / "vaspwave.h5").exists(),
+        reason="Gamma-only vaspwave fixtures are not available.",
     )
     def test_gamma_only_real_sample_matches_wavecar(self):
-        vaspwave = Vaspwave(self.local_gamma_dir / "vaspwave.h5")
-        wavecar = Wavecar(self.local_gamma_dir / "WAVECAR")
+        vaspwave = Vaspwave(self.gamma_dir / "vaspwave.h5")
+        wavecar = Wavecar(self.gamma_dir / "WAVECAR")
 
         assert vaspwave.spin == wavecar.spin
         assert vaspwave.nk == wavecar.nk
@@ -2913,11 +2917,11 @@ class TestVaspwave(MatSciTest):
             assert vaspwave.evaluate_wavefunc(0, band, r) == approx(wavecar.evaluate_wavefunc(0, band, r))
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "gamma-only" / "vaspwave.h5").exists(),
-        reason="Local gamma-only vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "gamma-only" / "vaspwave.h5").exists(),
+        reason="Gamma-only vaspwave fixtures are not available.",
     )
     def test_gamma_only_real_sample_parchg_and_unk_match_wavecar(self):
-        gamma_dir = self.local_gamma_dir
+        gamma_dir = self.gamma_dir
         vaspwave = Vaspwave(gamma_dir / "vaspwave.h5")
         wavecar = Wavecar(gamma_dir / "WAVECAR")
         poscar = Chgcar.from_file(gamma_dir / "CHGCAR").poscar
@@ -2934,12 +2938,12 @@ class TestVaspwave(MatSciTest):
         assert Unk.from_file(vaspwave_dir / "UNK00001.1") == Unk.from_file(wavecar_dir / "UNK00001.1")
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "std" / "vaspwave.h5").exists(),
-        reason="Local std vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "std" / "vaspwave.h5").exists(),
+        reason="Std vaspwave fixtures are not available.",
     )
     def test_std_real_sample_matches_wavecar(self):
-        vaspwave = Vaspwave(self.local_std_dir / "vaspwave.h5")
-        wavecar = Wavecar(self.local_std_dir / "WAVECAR")
+        vaspwave = Vaspwave(self.std_dir / "vaspwave.h5")
+        wavecar = Wavecar(self.std_dir / "WAVECAR")
 
         assert vaspwave.vasp_type == "std"
         assert vaspwave.spin == wavecar.spin
@@ -2965,11 +2969,11 @@ class TestVaspwave(MatSciTest):
             assert vaspwave.evaluate_wavefunc(0, band, r) == approx(wavecar.evaluate_wavefunc(0, band, r))
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "std" / "vaspwave.h5").exists(),
-        reason="Local std vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "std" / "vaspwave.h5").exists(),
+        reason="Std vaspwave fixtures are not available.",
     )
     def test_std_real_sample_parchg_and_unk_match_wavecar(self):
-        std_dir = self.local_std_dir
+        std_dir = self.std_dir
         vaspwave = Vaspwave(std_dir / "vaspwave.h5")
         wavecar = Wavecar(std_dir / "WAVECAR")
         poscar = Chgcar.from_file(std_dir / "CHGCAR").poscar
@@ -2986,11 +2990,11 @@ class TestVaspwave(MatSciTest):
         assert Unk.from_file(vaspwave_dir / "UNK00001.1") == Unk.from_file(wavecar_dir / "UNK00001.1")
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "std" / "vaspwave.h5").exists(),
-        reason="Local std vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "std" / "vaspwave.h5").exists(),
+        reason="Std vaspwave fixtures are not available.",
     )
     def test_std_spin_and_spinor_guards(self):
-        vaspwave = Vaspwave(self.local_std_dir / "vaspwave.h5")
+        vaspwave = Vaspwave(self.std_dir / "vaspwave.h5")
 
         with pytest.raises(NotImplementedError, match="Spin-resolved vaspwave.h5"):
             vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0, spin=1)
@@ -2999,12 +3003,12 @@ class TestVaspwave(MatSciTest):
             vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0, spinor=0)
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "ispin2-std" / "vaspwave.h5").exists(),
-        reason="Local ISPIN=2 std vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "ispin2-std" / "vaspwave.h5").exists(),
+        reason="ISPIN=2 std vaspwave fixtures are not available.",
     )
     def test_ispin2_std_real_sample_matches_wavecar(self):
-        vaspwave = Vaspwave(self.local_ispin2_std_dir / "vaspwave.h5")
-        wavecar = Wavecar(self.local_ispin2_std_dir / "WAVECAR")
+        vaspwave = Vaspwave(self.ispin2_std_dir / "vaspwave.h5")
+        wavecar = Wavecar(self.ispin2_std_dir / "WAVECAR")
 
         # VASP source-level restart code in vhdf5.F/fileio.F warns that
         # symmetry-reduced vasp_std wavefunctions can change their serialized
@@ -3040,11 +3044,11 @@ class TestVaspwave(MatSciTest):
                 )
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "ispin2-std" / "vaspwave.h5").exists(),
-        reason="Local ISPIN=2 std vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "ispin2-std" / "vaspwave.h5").exists(),
+        reason="ISPIN=2 std vaspwave fixtures are not available.",
     )
     def test_ispin2_std_band_energy_matches_wavecar(self):
-        vaspwave = Vaspwave(self.local_ispin2_std_dir / "vaspwave.h5")
+        vaspwave = Vaspwave(self.ispin2_std_dir / "vaspwave.h5")
 
         assert len(vaspwave.band_energy) == 2
         for spin in (0, 1):
@@ -3055,11 +3059,11 @@ class TestVaspwave(MatSciTest):
         assert not np.allclose(vaspwave.band_energy[0][0], vaspwave.band_energy[1][0])
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "ispin2-std" / "vaspwave.h5").exists(),
-        reason="Local ISPIN=2 std vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "ispin2-std" / "vaspwave.h5").exists(),
+        reason="ISPIN=2 std vaspwave fixtures are not available.",
     )
     def test_ispin2_std_real_sample_parchg_and_unk_match_wavecar(self):
-        std_dir = self.local_ispin2_std_dir
+        std_dir = self.ispin2_std_dir
         vaspwave = Vaspwave(std_dir / "vaspwave.h5")
         wavecar = Wavecar(std_dir / "WAVECAR")
         poscar = Chgcar.from_file(std_dir / "CHGCAR").poscar
@@ -3102,19 +3106,19 @@ class TestVaspwave(MatSciTest):
         assert unk_h5_dn.data.dtype == unk_wavecar_dn.data.dtype == np.complex128
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "isym0" / "vaspwave.h5").exists(),
-        reason="Local ISYM=0 vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "isym0" / "vaspwave.h5").exists(),
+        reason="ISYM=0 vaspwave fixtures are not available.",
     )
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "isym-1" / "vaspwave.h5").exists(),
-        reason="Local ISYM=-1 vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "isym-1" / "vaspwave.h5").exists(),
+        reason="ISYM=-1 vaspwave fixtures are not available.",
     )
     def test_isym_samples_do_not_restore_pointwise_ispin2_equivalence(self):
         # These local samples document current behavior only. Even without
         # symmetry reduction (`ISYM=0/-1`), the observed ISPIN=2 HDF5 samples do
         # not recover pointwise equivalence with the matching WAVECAR files,
         # especially for the spin-down channel.
-        for sample_dir in (self.local_isym0_dir, self.local_isymm1_dir):
+        for sample_dir in (self.isym0_dir, self.isymm1_dir):
             vaspwave = Vaspwave(sample_dir / "vaspwave.h5")
             wavecar = Wavecar(sample_dir / "WAVECAR")
             poscar = Chgcar.from_file(sample_dir / "CHGCAR").poscar
@@ -3133,50 +3137,50 @@ class TestVaspwave(MatSciTest):
             assert parchg_rel_err > 0.5
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "gamma-only" / "vaspwave.h5").exists(),
-        reason="Local gamma-only vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "gamma-only" / "vaspwave.h5").exists(),
+        reason="Gamma-only vaspwave fixtures are not available.",
     )
     def test_real_sample_structure_matches_chgcar(self):
-        vaspwave = Vaspwave(self.local_gamma_dir / "vaspwave.h5")
-        chgcar = Chgcar.from_file(self.local_gamma_dir / "CHGCAR")
+        vaspwave = Vaspwave(self.gamma_dir / "vaspwave.h5")
+        chgcar = Chgcar.from_file(self.gamma_dir / "CHGCAR")
 
         assert vaspwave.initial_structure == chgcar.structure
         assert vaspwave.final_structure == chgcar.structure
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "gamma-only" / "vaspwave.h5").exists(),
-        reason="Local gamma-only vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "gamma-only" / "vaspwave.h5").exists(),
+        reason="Gamma-only vaspwave fixtures are not available.",
     )
     def test_real_sample_charge_density_matches_chgcar(self):
-        vaspwave = Vaspwave(self.local_gamma_dir / "vaspwave.h5")
+        vaspwave = Vaspwave(self.gamma_dir / "vaspwave.h5")
         chgcar_h5 = vaspwave.get_charge_density()
-        chgcar = Chgcar.from_file(self.local_gamma_dir / "CHGCAR")
+        chgcar = Chgcar.from_file(self.gamma_dir / "CHGCAR")
 
         assert chgcar_h5.structure == chgcar.structure
         assert chgcar_h5.dim == chgcar.dim
         assert_allclose(chgcar_h5.data["total"], chgcar.data["total"])
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "gamma-only" / "vaspwave.h5").exists(),
-        reason="Local gamma-only vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "gamma-only" / "vaspwave.h5").exists(),
+        reason="Gamma-only vaspwave fixtures are not available.",
     )
     def test_real_sample_locpot_matches_file(self):
-        vaspwave = Vaspwave(self.local_gamma_dir / "vaspwave.h5")
+        vaspwave = Vaspwave(self.gamma_dir / "vaspwave.h5")
         locpot_h5 = vaspwave.get_locpot()
-        locpot = Locpot.from_file(self.local_gamma_dir / "LOCPOT")
+        locpot = Locpot.from_file(self.gamma_dir / "LOCPOT")
 
         assert locpot_h5.structure == locpot.structure
         assert locpot_h5.dim == locpot.dim
         assert_allclose(locpot_h5.data["total"], locpot.data["total"])
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "mno-ncl" / "vaspwave.h5").exists(),
-        reason="Local MnO ncl vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "mno-ncl" / "vaspwave.h5").exists(),
+        reason="MnO ncl vaspwave fixtures are not available.",
     )
     def test_mno_ncl_real_sample_charge_density_matches_chgcar(self):
-        vaspwave = Vaspwave(self.local_mno_ncl_dir / "vaspwave.h5")
+        vaspwave = Vaspwave(self.mno_ncl_dir / "vaspwave.h5")
         chgcar_h5 = vaspwave.get_charge_density()
-        chgcar = Chgcar.from_file(self.local_mno_ncl_dir / "CHGCAR")
+        chgcar = Chgcar.from_file(self.mno_ncl_dir / "CHGCAR")
 
         assert chgcar_h5.structure == chgcar.structure
         assert chgcar_h5.dim == chgcar.dim
@@ -3193,13 +3197,13 @@ class TestVaspwave(MatSciTest):
         assert diff_rel_err < 1e-6
 
     @pytest.mark.skipif(
-        not (LOCAL_VASPWAVE_TEST_DIR / "mno-ncl" / "vaspwave.h5").exists(),
-        reason="Local MnO ncl vaspwave validation files are not available.",
+        not (VASPWAVE_FIXTURE_DIR / "mno-ncl" / "vaspwave.h5").exists(),
+        reason="MnO ncl vaspwave fixtures are not available.",
     )
     def test_mno_ncl_real_sample_locpot_maps_soc_components(self):
-        vaspwave = Vaspwave(self.local_mno_ncl_dir / "vaspwave.h5")
+        vaspwave = Vaspwave(self.mno_ncl_dir / "vaspwave.h5")
         locpot = vaspwave.get_locpot()
-        reference = Locpot.from_file(self.local_mno_ncl_dir / "LOCPOT")
+        reference = Locpot.from_file(self.mno_ncl_dir / "LOCPOT")
 
         assert locpot.structure == reference.structure
         assert locpot.dim == reference.dim
