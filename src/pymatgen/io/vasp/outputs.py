@@ -6432,8 +6432,10 @@ class Vaspwave(Vasprun):
         if data.ndim != 4:
             raise ValueError(f"Expected {dataset_name} to have 4 dimensions, got shape {data.shape}.")
         if tuple(grid.tolist()) != tuple(data.shape[1:][::-1]):
+            dataset_parent = dataset_name.rsplit("/", 1)[0]
+            grid_dataset_name = f"{dataset_parent}/grid"
             raise ValueError(
-                f"/{dataset_name.rsplit('/', 1)[0]}/grid {tuple(grid.tolist())} does not match "
+                f"{grid_dataset_name} {tuple(grid.tolist())} does not match "
                 f"{dataset_name} shape {data.shape[1:]}."
             )
 
