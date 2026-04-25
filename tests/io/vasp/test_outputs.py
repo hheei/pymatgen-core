@@ -2386,7 +2386,7 @@ class TestVaspout(MatSciTest):
 @pytest.mark.skipif(condition=h5py is None, reason="h5py must be installed to use the .Vaspwave class.")
 class TestVaspwave(MatSciTest):
     @pytest.fixture(autouse=True)
-    def setup_method(self):
+    def setup_vaspwave_fixtures(self):
         self.ispin2_std_dir = self._extract_vaspwave_fixture_dir("H2-std-h5")
         self.h2_ncl_dir = self._extract_vaspwave_fixture_dir("H2-ncl-h5")
 
