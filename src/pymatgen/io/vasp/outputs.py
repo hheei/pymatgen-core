@@ -6642,8 +6642,12 @@ class Vaspwave(Vasprun):
             band (int): Band index of the desired wavefunction.
             spin (int | None): Spin index. Only ``None`` and ``0`` are
                 supported.
-            spinor (int | None): Spinor component index. Not currently
-                supported.
+            spinor (int | None): Spinor component index. Supported for ``ncl``
+                files, where ``None`` returns the summed spinor density and
+                ``0`` or ``1`` returns a single spinor component. For non-NCL
+                files, this argument is accepted for ``Wavecar`` compatibility;
+                any provided value selects the single-component branch used by
+                ``Wavecar.get_parchg()``.
             phase (bool): Whether to preserve the sign of the real part of the
                 wavefunction in the returned density.
             scale (int): Scaling factor applied to the FFT grid.
@@ -6653,8 +6657,6 @@ class Vaspwave(Vasprun):
                 wavefunction.
         """
         self._require_supported()
-        if self.vasp_type != "ncl" and spinor is not None:
-            raise NotImplementedError("Spinor-resolved vaspwave.h5 is not implemented yet.")
         kpoint, band = self._normalize_wave_indices(kpoint, band)
         if phase and not np.allclose(self.kpoints[kpoint], 0.0):
             warnings.warn(
@@ -6703,9 +6705,10 @@ class Vaspwave(Vasprun):
 
             wfr = self._ifft_wavefunction(kpoint, band, spin=0)
             den = np.abs(np.conj(wfr) * wfr)
-            # Match Wavecar's collinear branch, which sums both spinor channels
-            # when spinor is not explicitly selected.
-            den += den
+            if spinor is None:
+                # Match Wavecar's collinear branch, which sums both spinor
+                # channels even though fft_mesh ignores spinor for std/gam.
+                den += den
             if phase:
                 den = np.sign(np.real(wfr)) * den
             return Chgcar(poscar, {"total": den})

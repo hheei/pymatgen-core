@@ -2747,16 +2747,20 @@ class TestVaspwave(MatSciTest):
             vaspwave.get_parchg(poscar, 0, 1, phase=False).data["total"],
         )
 
-    def test_gamma_only_not_implemented_stubs(self):
+    def test_gamma_only_spin_and_spinor_guards(self):
         filename = Path(self.tmp_path) / "vaspwave.h5"
         self._write_minimal_vaspwave_h5(filename)
         vaspwave = Vaspwave(filename)
+        poscar = Poscar.from_file(f"{VASP_IN_DIR}/POSCAR")
 
         with pytest.raises(NotImplementedError, match="Spin-resolved vaspwave.h5"):
-            vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0, spin=1)
+            vaspwave.get_parchg(poscar, 0, 0, spin=1)
 
-        with pytest.raises(NotImplementedError, match="Spinor-resolved vaspwave.h5"):
-            vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0, spinor=0)
+        vaspwave_default = vaspwave.get_parchg(poscar, 0, 0).data["total"]
+
+        for spinor in (0, 1):
+            vaspwave_parchg = vaspwave.get_parchg(poscar, 0, 0, spinor=spinor).data["total"]
+            assert_allclose(vaspwave_parchg, 0.5 * vaspwave_default)
 
     def test_fft_mesh_invalid_band_index(self):
         filename = Path(self.tmp_path) / "vaspwave.h5"
@@ -2857,6 +2861,13 @@ class TestVaspwave(MatSciTest):
             vaspwave_parchg_spinor.data["total"] - wavecar_parchg_spinor.data["total"]
         ) / np.linalg.norm(wavecar_parchg_spinor.data["total"])
         assert spinor_rel_err < 0.02
+
+        vaspwave_parchg_spinor0 = vaspwave.get_parchg(poscar, 0, 0, spinor=0, phase=False, scale=1)
+        wavecar_parchg_spinor0 = wavecar.get_parchg(poscar, 0, 0, spinor=0, phase=False, scale=1)
+        spinor0_rel_err = np.linalg.norm(
+            vaspwave_parchg_spinor0.data["total"] - wavecar_parchg_spinor0.data["total"]
+        ) / np.linalg.norm(wavecar_parchg_spinor0.data["total"])
+        assert spinor0_rel_err < 0.02
 
         vaspwave_dir = Path(self.tmp_path) / "h2_ncl_vaspwave_unk"
         wavecar_dir = Path(self.tmp_path) / "h2_ncl_wavecar_unk"
@@ -3083,14 +3094,22 @@ class TestVaspwave(MatSciTest):
     def test_std_spin_and_spinor_guards(self):
         wavecar = Wavecar(f"{VASP_OUT_DIR}/WAVECAR.N2")
         filename = Path(self.tmp_path) / "std_runtime_vaspwave.h5"
-        self._write_vaspwave_h5_from_wavecar(filename, wavecar, Poscar.from_file(f"{VASP_IN_DIR}/POSCAR").structure)
+        poscar = Poscar.from_file(f"{VASP_IN_DIR}/POSCAR")
+        self._write_vaspwave_h5_from_wavecar(filename, wavecar, poscar.structure)
         vaspwave = Vaspwave(filename)
 
         with pytest.raises(NotImplementedError, match="Spin-resolved vaspwave.h5"):
-            vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0, spin=1)
+            vaspwave.get_parchg(poscar, 0, 0, spin=1)
 
-        with pytest.raises(NotImplementedError, match="Spinor-resolved vaspwave.h5"):
-            vaspwave.get_parchg(Poscar.from_file(f"{VASP_IN_DIR}/POSCAR"), 0, 0, spinor=0)
+        vaspwave_default = vaspwave.get_parchg(poscar, 0, 0)
+        wavecar_default = wavecar.get_parchg(poscar, 0, 0)
+        assert_allclose(vaspwave_default.data["total"], wavecar_default.data["total"])
+
+        for spinor in (0, 1):
+            vaspwave_parchg = vaspwave.get_parchg(poscar, 0, 0, spinor=spinor)
+            wavecar_parchg = wavecar.get_parchg(poscar, 0, 0, spinor=spinor)
+            assert_allclose(vaspwave_parchg.data["total"], 0.5 * vaspwave_default.data["total"])
+            assert_allclose(vaspwave_parchg.data["total"], wavecar_parchg.data["total"])
 
     @pytest.mark.skipif(
         not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
