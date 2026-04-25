@@ -6394,6 +6394,10 @@ class Vaspwave(Vasprun):
 
     def _validate_spin_and_spinor_args(self, spin: int = 0, spinor: int = 0) -> tuple[int, int]:
         """Validate supported spin and spinor arguments for wavefunction APIs."""
+        if self.vasp_type not in {"gam", "std", "ncl"}:
+            raise NotImplementedError("Unsupported vaspwave.h5 type.")
+        if self.spin not in {1, 2}:
+            raise NotImplementedError("Unsupported vaspwave.h5 spin setting.")
         if self.vasp_type == "ncl":
             if spin != 0:
                 raise NotImplementedError("Spin-resolved ncl vaspwave.h5 is not implemented yet.")
@@ -6573,6 +6577,10 @@ class Vaspwave(Vasprun):
             np.ndarray: Complex plane-wave coefficients for the requested
                 wavefunction.
         """
+        if self.vasp_type not in {"gam", "std", "ncl"}:
+            raise NotImplementedError("Unsupported vaspwave.h5 type.")
+        if self.spin not in {1, 2}:
+            raise NotImplementedError("Unsupported vaspwave.h5 spin setting.")
         spin_index = self._normalize_spin_index(spin_index)
         kpoint_index, band_index = self._normalize_wave_indices(kpoint_index, band_index)
         return self._get_band_coeffs(spin_index, kpoint_index, band_index)

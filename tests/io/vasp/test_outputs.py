@@ -2777,7 +2777,7 @@ class TestVaspwave(MatSciTest):
         vaspwave.vasp_type = "unknown"
 
         with pytest.raises(NotImplementedError, match="Unsupported vaspwave.h5 type"):
-            vaspwave._require_supported()
+            vaspwave.fft_mesh(0, 0)
 
     def test_unsupported_spin_setting_guard(self):
         filename = Path(self.tmp_path) / "vaspwave.h5"
@@ -2786,7 +2786,7 @@ class TestVaspwave(MatSciTest):
         vaspwave.spin = 3
 
         with pytest.raises(NotImplementedError, match="Unsupported vaspwave.h5 spin setting"):
-            vaspwave._require_supported()
+            vaspwave.get_band_coeffs(0, 0, 0)
 
     @pytest.mark.skipif(
         not (Path(TEST_DIR) / "outputs" / "vaspwave-H2.tar.gz").exists(),
