@@ -6692,7 +6692,7 @@ class Vaspwave(Vasprun):
                     den = np.abs(np.conj(wfr) * wfr)
                     den += np.abs(np.conj(wfr_t) * wfr_t)
 
-                if phase:
+                if phase and spinor is not None:
                     den = np.sign(np.real(wfr)) * den
                 return Chgcar(poscar, {"total": den})
 
